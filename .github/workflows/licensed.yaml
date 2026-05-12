@@ -1,0 +1,127 @@
+# This workflow checks the statuses of cached dependencies used in this action
+# with the help of the Licensed tool. If any licenses are invalid or missing,
+# this workflow will fail. See: https://github.com/licensee/licensed
+
+name: Licensed
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check-licenses:
+    name: Check Licenses
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      needs_update: ${{ steps.check-licenses.outcome == 'failure' }}
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd #v6.0.2
+        with:
+          fetch-depth: 1
+
+      - &setup-node
+        name: Setup Node.js
+        id: setup-node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e #v6.4.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - &npm-ci
+        name: Install Dependencies
+        id: npm-ci
+        run: npm ci --legacy-peer-deps
+
+      - &setup-ruby
+        name: Setup Ruby
+        id: setup-ruby
+        uses: ruby/setup-ruby@c4e5b1316158f92e3d49443a9d58b31d25ac0f8f #v1.306.0
+        with:
+          ruby-version: ruby
+
+      - &setup-licensed
+        uses: licensee/setup-licensed@0d52e575b3258417672be0dff2f115d7db8771d8 #v1.3.2
+        with:
+          version: 5.x
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check Licenses
+        id: check-licenses
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
+        run: licensed status
+
+  update-licenses:
+    name: Update Licenses
+    runs-on: ubuntu-latest
+    if:
+      ${{ github.event_name == 'workflow_dispatch' &&
+      needs.check-licenses.outputs.needs_update == 'true' }}
+    needs: check-licenses
+    permissions:
+      contents: write
+      pull-requests: write
+    environment: licensed-updates
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd #v6.0.2
+        with:
+          fetch-depth: 0
+
+      - *setup-node
+
+      - *npm-ci
+
+      - *setup-ruby
+
+      - *setup-licensed
+
+      - name: Update Licenses
+        id: update-licenses
+        run: licensed cache
+
+      - name: Create Branch and Commit Licenses
+        id: commit-licenses
+        run: |
+          git config --local user.email "licensed-ci@users.noreply.github.com"
+          git config --local user.name "licensed-ci"
+
+          # Create and switch to new branch
+          git checkout -b licensed/update
+
+          git add .licenses/
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "Auto-update license files"
+            # Force push to update existing branch if PR already exists
+            git push -f origin licensed/update
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # prettier-ignore
+      - if: ${{ steps.commit-licenses.outputs.has_changes == 'true' }}
+        name: Create Pull Request
+        id: create-pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "Auto-update license files" \
+            --body "Automated license cache update by Licensed tool." \
+            --base main \
+            --head licensed/update || echo "PR might already exist"
