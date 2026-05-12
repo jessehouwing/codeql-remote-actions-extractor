@@ -2,6 +2,7 @@ import { jest } from '@jest/globals'
 
 const mockReposGet = jest.fn()
 const mockReposGetContent = jest.fn()
+const mockReposGetCommit = jest.fn()
 const mockReposListTags = jest.fn()
 const mockReposListBranches = jest.fn()
 const mockCreateSnapshot = jest.fn()
@@ -9,6 +10,7 @@ const mockCreateSnapshot = jest.fn()
 // Separate mocks for public GitHub instance
 const mockPublicReposGet = jest.fn()
 const mockPublicReposGetContent = jest.fn()
+const mockPublicReposGetCommit = jest.fn()
 const mockPublicReposListTags = jest.fn()
 const mockPublicReposListBranches = jest.fn()
 
@@ -21,6 +23,7 @@ export const getOctokit = jest.fn(
           repos: {
             get: mockPublicReposGet,
             getContent: mockPublicReposGetContent,
+            getCommit: mockPublicReposGetCommit,
             listTags: mockPublicReposListTags,
             listBranches: mockPublicReposListBranches
           },
@@ -36,6 +39,7 @@ export const getOctokit = jest.fn(
         repos: {
           get: mockReposGet,
           getContent: mockReposGetContent,
+          getCommit: mockReposGetCommit,
           listTags: mockReposListTags,
           listBranches: mockReposListBranches
         },
@@ -53,6 +57,7 @@ export const mockOctokit = {
     repos: {
       get: mockReposGet,
       getContent: mockReposGetContent,
+      getCommit: mockReposGetCommit,
       listTags: mockReposListTags,
       listBranches: mockReposListBranches
     },
@@ -68,6 +73,7 @@ export const mockPublicOctokit = {
     repos: {
       get: mockPublicReposGet,
       getContent: mockPublicReposGetContent,
+      getCommit: mockPublicReposGetCommit,
       listTags: mockPublicReposListTags,
       listBranches: mockPublicReposListBranches
     }

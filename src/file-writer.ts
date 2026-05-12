@@ -8,14 +8,19 @@ import { OctokitProvider } from './octokit-provider.js'
 export interface WriteResult {
   actionsWritten: number
   workflowsWritten: number
-  skipped: number
   errors: string[]
+}
+
+// Internal mapping entry: owner/repo -> { ref -> sha }
+interface MappingEntries {
+  [ownerRepo: string]: { [ref: string]: string }
 }
 
 export class FileWriter {
   private octokitProvider: OctokitProvider
   private processedKeys: Set<string> = new Set()
-  private writtenPaths: Map<string, string> = new Map() // targetPath -> uses string that wrote it
+  private actionMappings: MappingEntries = {}
+  private workflowMappings: MappingEntries = {}
 
   constructor(token: string, publicGitHubToken?: string) {
     this.octokitProvider = new OctokitProvider({
@@ -31,7 +36,6 @@ export class FileWriter {
     const result: WriteResult = {
       actionsWritten: 0,
       workflowsWritten: 0,
-      skipped: 0,
       errors: []
     }
 
@@ -43,24 +47,18 @@ export class FileWriter {
       try {
         if (this.isCallableWorkflow(dep)) {
           const writeResult = await this.writeCallableWorkflow(dep, repoRoot)
-          if (writeResult === 'conflict') {
-            result.skipped++
-          } else if (writeResult) {
+          if (writeResult) {
             result.workflowsWritten++
             result.actionsWritten += writeResult.actionsWritten
             result.workflowsWritten += writeResult.workflowsWritten
-            result.skipped += writeResult.skipped
             result.errors.push(...writeResult.errors)
           }
         } else {
           const writeResult = await this.writeCompositeAction(dep, repoRoot)
-          if (writeResult === 'conflict') {
-            result.skipped++
-          } else if (writeResult) {
+          if (writeResult) {
             result.actionsWritten++
             result.actionsWritten += writeResult.actionsWritten
             result.workflowsWritten += writeResult.workflowsWritten
-            result.skipped += writeResult.skipped
             result.errors.push(...writeResult.errors)
           }
         }
@@ -71,6 +69,9 @@ export class FileWriter {
       }
     }
 
+    // Write mapping.yaml files
+    this.writeMappingFiles(repoRoot)
+
     return result
   }
 
@@ -78,13 +79,32 @@ export class FileWriter {
     return /^[^/]+\/[^/]+\/.+\.ya?ml@.+$/.test(dep.uses)
   }
 
+  private async resolveRefToSha(
+    dep: ActionDependency
+  ): Promise<string> {
+    const octokit = await this.octokitProvider.getOctokitForRepo(
+      dep.owner,
+      dep.repo
+    )
+    const { data } = await octokit.rest.repos.getCommit({
+      owner: dep.owner,
+      repo: dep.repo,
+      ref: dep.ref
+    })
+    return data.sha
+  }
+
   private async writeCompositeAction(
     dep: ActionDependency,
     repoRoot: string
-  ): Promise<WriteResult | 'conflict' | null> {
+  ): Promise<WriteResult | null> {
+    const sha = await this.resolveRefToSha(dep)
+    const ownerRepo = `${dep.owner}/${dep.repo}`
+
+    // Build SHA-based path: {owner}/{repo}/{sha}/[actionPath/]
     const basePath = dep.actionPath
-      ? `${dep.owner}/${dep.repo}/${dep.actionPath}`
-      : `${dep.owner}/${dep.repo}`
+      ? `${ownerRepo}/${sha}/${dep.actionPath}`
+      : `${ownerRepo}/${sha}`
     const targetDir = path.join(
       repoRoot,
       '.github',
@@ -94,26 +114,20 @@ export class FileWriter {
     )
     const targetFile = path.join(targetDir, 'action.yml')
 
-    // Check for version conflict at same target path
-    const existingUses = this.writtenPaths.get(targetFile)
-    if (existingUses) {
-      core.warning(
-        `Version conflict: ${dep.uses} maps to the same path as ${existingUses} — ` +
-          `only ${existingUses} will be analyzed. ` +
-          `The CodeQL extractor does not support multiple versions of the same action.`
-      )
-      return 'conflict'
-    }
-
     const content = await this.fetchActionFile(dep)
     if (!content) return null
 
     fs.mkdirSync(targetDir, { recursive: true })
     fs.writeFileSync(targetFile, content, 'utf8')
-    this.writtenPaths.set(targetFile, dep.uses)
     core.info(
       `Downloaded: ${dep.uses} -> ${path.relative(repoRoot, targetDir)}/action.yml`
     )
+
+    // Record mapping entry
+    if (!this.actionMappings[ownerRepo]) {
+      this.actionMappings[ownerRepo] = {}
+    }
+    this.actionMappings[ownerRepo][dep.ref] = sha
 
     return await this.processNestedDependencies(content, repoRoot)
   }
@@ -121,11 +135,15 @@ export class FileWriter {
   private async writeCallableWorkflow(
     dep: ActionDependency,
     repoRoot: string
-  ): Promise<WriteResult | 'conflict' | null> {
+  ): Promise<WriteResult | null> {
     const match = dep.uses.match(/^[^/]+\/[^/]+\/(.+\.ya?ml)@.+$/)
     if (!match) return null
 
+    const sha = await this.resolveRefToSha(dep)
+    const ownerRepo = `${dep.owner}/${dep.repo}`
     const workflowPath = match[1]
+
+    // Build SHA-based path: {owner}/{repo}/{sha}/{workflowPath}
     const targetPath = path.join(
       repoRoot,
       '.github',
@@ -133,19 +151,9 @@ export class FileWriter {
       'external',
       dep.owner,
       dep.repo,
+      sha,
       workflowPath
     )
-
-    // Check for version conflict at same target path
-    const existingUses = this.writtenPaths.get(targetPath)
-    if (existingUses) {
-      core.warning(
-        `Version conflict: ${dep.uses} maps to the same path as ${existingUses} — ` +
-          `only ${existingUses} will be analyzed. ` +
-          `The CodeQL extractor does not support multiple versions of the same action.`
-      )
-      return 'conflict'
-    }
 
     const octokit = await this.octokitProvider.getOctokitForRepo(
       dep.owner,
@@ -166,12 +174,53 @@ export class FileWriter {
 
     fs.mkdirSync(path.dirname(targetPath), { recursive: true })
     fs.writeFileSync(targetPath, content, 'utf8')
-    this.writtenPaths.set(targetPath, dep.uses)
     core.info(
       `Downloaded: ${dep.uses} -> ${path.relative(repoRoot, targetPath)}`
     )
 
+    // Record mapping entry
+    if (!this.workflowMappings[ownerRepo]) {
+      this.workflowMappings[ownerRepo] = {}
+    }
+    this.workflowMappings[ownerRepo][dep.ref] = sha
+
     return await this.processNestedDependencies(content, repoRoot)
+  }
+
+  private writeMappingFiles(repoRoot: string): void {
+    if (Object.keys(this.actionMappings).length > 0) {
+      const mappingPath = path.join(
+        repoRoot,
+        '.github',
+        'actions',
+        'external',
+        'mapping.yaml'
+      )
+      fs.mkdirSync(path.dirname(mappingPath), { recursive: true })
+      fs.writeFileSync(
+        mappingPath,
+        yaml.stringify(this.actionMappings),
+        'utf8'
+      )
+      core.info(`Wrote action mapping file: ${path.relative(repoRoot, mappingPath)}`)
+    }
+
+    if (Object.keys(this.workflowMappings).length > 0) {
+      const mappingPath = path.join(
+        repoRoot,
+        '.github',
+        'workflows',
+        'external',
+        'mapping.yaml'
+      )
+      fs.mkdirSync(path.dirname(mappingPath), { recursive: true })
+      fs.writeFileSync(
+        mappingPath,
+        yaml.stringify(this.workflowMappings),
+        'utf8'
+      )
+      core.info(`Wrote workflow mapping file: ${path.relative(repoRoot, mappingPath)}`)
+    }
   }
 
   private async fetchActionFile(
@@ -211,7 +260,6 @@ export class FileWriter {
     const emptyResult: WriteResult = {
       actionsWritten: 0,
       workflowsWritten: 0,
-      skipped: 0,
       errors: []
     }
 

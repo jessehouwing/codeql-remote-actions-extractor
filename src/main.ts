@@ -67,12 +67,6 @@ export async function run(): Promise<void> {
       core.warning(`${result.errors.length} dependencies failed to download`)
     }
 
-    if (result.skipped > 0) {
-      core.warning(
-        `${result.skipped} dependencies skipped due to version conflicts (see warnings above)`
-      )
-    }
-
     core.setOutput('actions-count', result.actionsWritten)
     core.setOutput('workflows-count', result.workflowsWritten)
   } catch (error) {

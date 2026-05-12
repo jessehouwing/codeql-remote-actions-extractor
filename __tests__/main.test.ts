@@ -61,6 +61,10 @@ jobs:
     github.mockOctokit.rest.repos.getContent.mockResolvedValue({
       data: { content: Buffer.from(actionYml).toString('base64') }
     })
+    // FileWriter resolves ref to SHA
+    github.mockOctokit.rest.repos.getCommit.mockResolvedValue({
+      data: { sha: 'abc123' }
+    })
 
     // Set GITHUB_WORKSPACE to tempDir so FileWriter writes there
     process.env.GITHUB_WORKSPACE = tempDir
@@ -78,6 +82,7 @@ jobs:
       'external',
       'actions',
       'checkout',
+      'abc123',
       'action.yml'
     )
     expect(fs.existsSync(expectedPath)).toBe(true)
@@ -152,6 +157,10 @@ jobs:
     github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
       data: { content: Buffer.from(actionYml).toString('base64') }
     })
+    // FileWriter resolves refs to SHAs
+    github.mockOctokit.rest.repos.getCommit.mockResolvedValue({
+      data: { sha: 'sha111' }
+    })
 
     process.env.GITHUB_WORKSPACE = tempDir
     await run()
@@ -172,6 +181,9 @@ jobs:
     fs.writeFileSync(path.join(tempDir, 'test.yml'), workflowContent)
 
     github.mockOctokit.rest.repos.getContent.mockRejectedValue(
+      new Error('Not found')
+    )
+    github.mockOctokit.rest.repos.getCommit.mockRejectedValue(
       new Error('Not found')
     )
 

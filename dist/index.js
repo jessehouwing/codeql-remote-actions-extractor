@@ -29618,7 +29618,7 @@ function stringifyProps(node, tagObj, { anchors, doc }) {
         props.push(doc.directives.tagString(tag));
     return props.join(' ');
 }
-function stringify(item, ctx, onComment, onChompKeep) {
+function stringify$1(item, ctx, onComment, onChompKeep) {
     if (isPair(item))
         return item.toString(ctx, onComment, onChompKeep);
     if (isAlias(item)) {
@@ -29681,7 +29681,7 @@ function stringifyPair({ key, value }, ctx, onComment, onChompKeep) {
     });
     let keyCommentDone = false;
     let chompKeep = false;
-    let str = stringify(key, ctx, () => (keyCommentDone = true), () => (chompKeep = true));
+    let str = stringify$1(key, ctx, () => (keyCommentDone = true), () => (chompKeep = true));
     if (!explicitKey && !ctx.inFlow && str.length > 1024) {
         if (simpleKeys)
             throw new Error('With simple keys, single line scalar must not span more than 1024 characters');
@@ -29744,7 +29744,7 @@ function stringifyPair({ key, value }, ctx, onComment, onChompKeep) {
         ctx.indent = ctx.indent.substring(2);
     }
     let valueCommentDone = false;
-    const valueStr = stringify(value, ctx, () => (valueCommentDone = true), () => (chompKeep = true));
+    const valueStr = stringify$1(value, ctx, () => (valueCommentDone = true), () => (chompKeep = true));
     let ws = ' ';
     if (keyComment || vsb || vcb) {
         ws = vsb ? '\n' : '';
@@ -29983,7 +29983,7 @@ function stringifyBlockCollection({ comment, items }, ctx, { blockItemPrefix, fl
             }
         }
         chompKeep = false;
-        let str = stringify(item, itemCtx, () => (comment = null), () => (chompKeep = true));
+        let str = stringify$1(item, itemCtx, () => (comment = null), () => (chompKeep = true));
         if (comment)
             str += lineComment(str, itemIndent, commentString(comment));
         if (chompKeep && comment)
@@ -30053,7 +30053,7 @@ function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
         }
         if (comment)
             reqNewline = true;
-        let str = stringify(item, itemCtx, () => (comment = null));
+        let str = stringify$1(item, itemCtx, () => (comment = null));
         reqNewline || (reqNewline = lines.length > linesAtValue || str.includes('\n'));
         if (i < items.length - 1) {
             str += ',';
@@ -31258,7 +31258,7 @@ function stringifyDocument(doc, options) {
             contentComment = doc.contents.comment;
         }
         const onChompKeep = contentComment ? undefined : () => (chompKeep = true);
-        let body = stringify(doc.contents, ctx, () => (contentComment = null), onChompKeep);
+        let body = stringify$1(doc.contents, ctx, () => (contentComment = null), onChompKeep);
         if (contentComment)
             body += lineComment(body, '', commentString(contentComment));
         if ((body[0] === '|' || body[0] === '>') &&
@@ -31271,7 +31271,7 @@ function stringifyDocument(doc, options) {
             lines.push(body);
     }
     else {
-        lines.push(stringify(doc.contents, ctx));
+        lines.push(stringify$1(doc.contents, ctx));
     }
     if (doc.directives?.docEnd) {
         if (doc.comment) {
@@ -35039,6 +35039,20 @@ function parse$1(src, reviver, options) {
             doc.errors = [];
     }
     return doc.toJS(Object.assign({ reviver: _reviver }, options));
+}
+function stringify(value, replacer, options) {
+    let _replacer = null;
+    if (Array.isArray(replacer)) {
+        _replacer = replacer;
+    }
+    if (value === undefined) {
+        const { keepUndefined } = {};
+        if (!keepUndefined)
+            return undefined;
+    }
+    if (isDocument(value) && !_replacer)
+        return value.toString(options);
+    return new Document(value, _replacer, options).toString(options);
 }
 
 class Context {
@@ -47652,7 +47666,8 @@ class WorkflowParser {
 class FileWriter {
     octokitProvider;
     processedKeys = new Set();
-    writtenPaths = new Map(); // targetPath -> uses string that wrote it
+    actionMappings = {};
+    workflowMappings = {};
     constructor(token, publicGitHubToken) {
         this.octokitProvider = new OctokitProvider({
             token,
@@ -47663,7 +47678,6 @@ class FileWriter {
         const result = {
             actionsWritten: 0,
             workflowsWritten: 0,
-            skipped: 0,
             errors: []
         };
         for (const dep of dependencies) {
@@ -47674,27 +47688,19 @@ class FileWriter {
             try {
                 if (this.isCallableWorkflow(dep)) {
                     const writeResult = await this.writeCallableWorkflow(dep, repoRoot);
-                    if (writeResult === 'conflict') {
-                        result.skipped++;
-                    }
-                    else if (writeResult) {
+                    if (writeResult) {
                         result.workflowsWritten++;
                         result.actionsWritten += writeResult.actionsWritten;
                         result.workflowsWritten += writeResult.workflowsWritten;
-                        result.skipped += writeResult.skipped;
                         result.errors.push(...writeResult.errors);
                     }
                 }
                 else {
                     const writeResult = await this.writeCompositeAction(dep, repoRoot);
-                    if (writeResult === 'conflict') {
-                        result.skipped++;
-                    }
-                    else if (writeResult) {
+                    if (writeResult) {
                         result.actionsWritten++;
                         result.actionsWritten += writeResult.actionsWritten;
                         result.workflowsWritten += writeResult.workflowsWritten;
-                        result.skipped += writeResult.skipped;
                         result.errors.push(...writeResult.errors);
                     }
                 }
@@ -47705,48 +47711,53 @@ class FileWriter {
                 result.errors.push(msg);
             }
         }
+        // Write mapping.yaml files
+        this.writeMappingFiles(repoRoot);
         return result;
     }
     isCallableWorkflow(dep) {
         return /^[^/]+\/[^/]+\/.+\.ya?ml@.+$/.test(dep.uses);
     }
+    async resolveRefToSha(dep) {
+        const octokit = await this.octokitProvider.getOctokitForRepo(dep.owner, dep.repo);
+        const { data } = await octokit.rest.repos.getCommit({
+            owner: dep.owner,
+            repo: dep.repo,
+            ref: dep.ref
+        });
+        return data.sha;
+    }
     async writeCompositeAction(dep, repoRoot) {
+        const sha = await this.resolveRefToSha(dep);
+        const ownerRepo = `${dep.owner}/${dep.repo}`;
+        // Build SHA-based path: {owner}/{repo}/{sha}/[actionPath/]
         const basePath = dep.actionPath
-            ? `${dep.owner}/${dep.repo}/${dep.actionPath}`
-            : `${dep.owner}/${dep.repo}`;
+            ? `${ownerRepo}/${sha}/${dep.actionPath}`
+            : `${ownerRepo}/${sha}`;
         const targetDir = path.join(repoRoot, '.github', 'actions', 'external', basePath);
         const targetFile = path.join(targetDir, 'action.yml');
-        // Check for version conflict at same target path
-        const existingUses = this.writtenPaths.get(targetFile);
-        if (existingUses) {
-            warning(`Version conflict: ${dep.uses} maps to the same path as ${existingUses} — ` +
-                `only ${existingUses} will be analyzed. ` +
-                `The CodeQL extractor does not support multiple versions of the same action.`);
-            return 'conflict';
-        }
         const content = await this.fetchActionFile(dep);
         if (!content)
             return null;
         fs.mkdirSync(targetDir, { recursive: true });
         fs.writeFileSync(targetFile, content, 'utf8');
-        this.writtenPaths.set(targetFile, dep.uses);
         info(`Downloaded: ${dep.uses} -> ${path.relative(repoRoot, targetDir)}/action.yml`);
+        // Record mapping entry
+        if (!this.actionMappings[ownerRepo]) {
+            this.actionMappings[ownerRepo] = {};
+        }
+        this.actionMappings[ownerRepo][dep.ref] = sha;
         return await this.processNestedDependencies(content, repoRoot);
     }
     async writeCallableWorkflow(dep, repoRoot) {
         const match = dep.uses.match(/^[^/]+\/[^/]+\/(.+\.ya?ml)@.+$/);
         if (!match)
             return null;
+        const sha = await this.resolveRefToSha(dep);
+        const ownerRepo = `${dep.owner}/${dep.repo}`;
         const workflowPath = match[1];
-        const targetPath = path.join(repoRoot, '.github', 'workflows', 'external', dep.owner, dep.repo, workflowPath);
-        // Check for version conflict at same target path
-        const existingUses = this.writtenPaths.get(targetPath);
-        if (existingUses) {
-            warning(`Version conflict: ${dep.uses} maps to the same path as ${existingUses} — ` +
-                `only ${existingUses} will be analyzed. ` +
-                `The CodeQL extractor does not support multiple versions of the same action.`);
-            return 'conflict';
-        }
+        // Build SHA-based path: {owner}/{repo}/{sha}/{workflowPath}
+        const targetPath = path.join(repoRoot, '.github', 'workflows', 'external', dep.owner, dep.repo, sha, workflowPath);
         const octokit = await this.octokitProvider.getOctokitForRepo(dep.owner, dep.repo);
         const { data } = await octokit.rest.repos.getContent({
             owner: dep.owner,
@@ -47759,9 +47770,27 @@ class FileWriter {
         const content = Buffer.from(data.content, 'base64').toString('utf8');
         fs.mkdirSync(path.dirname(targetPath), { recursive: true });
         fs.writeFileSync(targetPath, content, 'utf8');
-        this.writtenPaths.set(targetPath, dep.uses);
         info(`Downloaded: ${dep.uses} -> ${path.relative(repoRoot, targetPath)}`);
+        // Record mapping entry
+        if (!this.workflowMappings[ownerRepo]) {
+            this.workflowMappings[ownerRepo] = {};
+        }
+        this.workflowMappings[ownerRepo][dep.ref] = sha;
         return await this.processNestedDependencies(content, repoRoot);
+    }
+    writeMappingFiles(repoRoot) {
+        if (Object.keys(this.actionMappings).length > 0) {
+            const mappingPath = path.join(repoRoot, '.github', 'actions', 'external', 'mapping.yaml');
+            fs.mkdirSync(path.dirname(mappingPath), { recursive: true });
+            fs.writeFileSync(mappingPath, stringify(this.actionMappings), 'utf8');
+            info(`Wrote action mapping file: ${path.relative(repoRoot, mappingPath)}`);
+        }
+        if (Object.keys(this.workflowMappings).length > 0) {
+            const mappingPath = path.join(repoRoot, '.github', 'workflows', 'external', 'mapping.yaml');
+            fs.mkdirSync(path.dirname(mappingPath), { recursive: true });
+            fs.writeFileSync(mappingPath, stringify(this.workflowMappings), 'utf8');
+            info(`Wrote workflow mapping file: ${path.relative(repoRoot, mappingPath)}`);
+        }
     }
     async fetchActionFile(dep) {
         const octokit = await this.octokitProvider.getOctokitForRepo(dep.owner, dep.repo);
@@ -47788,7 +47817,6 @@ class FileWriter {
         const emptyResult = {
             actionsWritten: 0,
             workflowsWritten: 0,
-            skipped: 0,
             errors: []
         };
         let parsed;
@@ -47896,9 +47924,6 @@ async function run() {
         info(`Downloaded ${result.workflowsWritten} callable workflows to .github/workflows/external/`);
         if (result.errors.length > 0) {
             warning(`${result.errors.length} dependencies failed to download`);
-        }
-        if (result.skipped > 0) {
-            warning(`${result.skipped} dependencies skipped due to version conflicts (see warnings above)`);
         }
         setOutput('actions-count', result.actionsWritten);
         setOutput('workflows-count', result.workflowsWritten);

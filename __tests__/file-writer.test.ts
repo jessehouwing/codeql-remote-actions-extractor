@@ -14,12 +14,27 @@ import * as github from '../__fixtures__/github.js'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import * as yaml from 'yaml'
 
 // Mock @actions/core and @actions/github before importing FileWriter
 jest.unstable_mockModule('@actions/core', () => core)
 jest.unstable_mockModule('@actions/github', () => github)
 
 const { FileWriter } = await import('../src/file-writer.js')
+
+/** Helper: mock getCommit to resolve a ref to a SHA */
+function mockGetCommit(sha: string) {
+  github.mockOctokit.rest.repos.getCommit.mockResolvedValueOnce({
+    data: { sha }
+  })
+}
+
+/** Helper: mock getContent to return base64-encoded content */
+function mockGetContent(content: string) {
+  github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
+    data: { content: Buffer.from(content).toString('base64') }
+  })
+}
 
 describe('FileWriter', () => {
   let tempDir: string
@@ -38,11 +53,10 @@ describe('FileWriter', () => {
   })
 
   describe('writeExternalDependencies', () => {
-    it('writes a composite action to the correct path', async () => {
+    it('writes a composite action to the correct SHA-based path', async () => {
       const actionYml = `name: Test\nruns:\n  using: node20\n  main: index.js\n`
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(actionYml).toString('base64') }
-      })
+      mockGetCommit('abc123def456')
+      mockGetContent(actionYml)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -68,17 +82,29 @@ describe('FileWriter', () => {
         'external',
         'actions',
         'cache',
+        'abc123def456',
         'action.yml'
       )
       expect(fs.existsSync(expectedPath)).toBe(true)
       expect(fs.readFileSync(expectedPath, 'utf8')).toBe(actionYml)
+
+      // mapping.yaml should exist
+      const mappingPath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'mapping.yaml'
+      )
+      expect(fs.existsSync(mappingPath)).toBe(true)
+      const mapping = yaml.parse(fs.readFileSync(mappingPath, 'utf8'))
+      expect(mapping['actions/cache']).toEqual({ v4: 'abc123def456' })
     })
 
-    it('writes an action with actionPath to the correct subdirectory', async () => {
+    it('writes an action with actionPath to the correct SHA-based subdirectory', async () => {
       const actionYml = `name: Setup\nruns:\n  using: composite\n  steps:\n    - run: echo hi\n      shell: bash\n`
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(actionYml).toString('base64') }
-      })
+      mockGetCommit('sha789')
+      mockGetContent(actionYml)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -103,6 +129,7 @@ describe('FileWriter', () => {
         'external',
         'TanStack',
         'config',
+        'sha789',
         '.github',
         'setup',
         'action.yml'
@@ -110,11 +137,10 @@ describe('FileWriter', () => {
       expect(fs.existsSync(expectedPath)).toBe(true)
     })
 
-    it('writes a callable workflow to the correct path', async () => {
+    it('writes a callable workflow to the correct SHA-based path', async () => {
       const workflowYml = `name: CI\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n`
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(workflowYml).toString('base64') }
-      })
+      mockGetCommit('workflowsha123')
+      mockGetContent(workflowYml)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -140,19 +166,31 @@ describe('FileWriter', () => {
         'external',
         'org',
         'repo',
+        'workflowsha123',
         '.github',
         'workflows',
         'ci.yml'
       )
       expect(fs.existsSync(expectedPath)).toBe(true)
       expect(fs.readFileSync(expectedPath, 'utf8')).toBe(workflowYml)
+
+      // workflow mapping.yaml should exist
+      const mappingPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'mapping.yaml'
+      )
+      expect(fs.existsSync(mappingPath)).toBe(true)
+      const mapping = yaml.parse(fs.readFileSync(mappingPath, 'utf8'))
+      expect(mapping['org/repo']).toEqual({ main: 'workflowsha123' })
     })
 
     it('deduplicates dependencies by key', async () => {
       const actionYml = `name: Test\nruns:\n  using: node20\n  main: index.js\n`
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(actionYml).toString('base64') }
-      })
+      mockGetCommit('sha111')
+      mockGetContent(actionYml)
 
       const writer = new FileWriter('test-token')
       const dep = {
@@ -167,14 +205,17 @@ describe('FileWriter', () => {
       )
 
       expect(result.actionsWritten).toBe(1)
-      // Only one getContent call should be made
+      // Only one getCommit + one getContent call should be made
+      expect(
+        github.mockOctokit.rest.repos.getCommit
+      ).toHaveBeenCalledTimes(1)
       expect(
         github.mockOctokit.rest.repos.getContent
       ).toHaveBeenCalledTimes(1)
     })
 
     it('handles API errors gracefully', async () => {
-      github.mockOctokit.rest.repos.getContent.mockRejectedValue(
+      github.mockOctokit.rest.repos.getCommit.mockRejectedValue(
         new Error('Not found')
       )
 
@@ -191,14 +232,14 @@ describe('FileWriter', () => {
         tempDir
       )
 
-      // fetchActionFile returns null when both action.yml and action.yaml fail,
-      // so writeCompositeAction returns null (not written, not an error)
+      // Error from getCommit is caught
       expect(result.actionsWritten).toBe(0)
-      expect(result.errors).toHaveLength(0)
+      expect(result.errors).toHaveLength(1)
     })
 
-    it('returns false when action.yml and action.yaml both not found', async () => {
-      // Both action.yml and action.yaml fail
+    it('returns zero when action.yml and action.yaml both not found', async () => {
+      // getCommit succeeds but both action files fail
+      mockGetCommit('sha222')
       github.mockOctokit.rest.repos.getContent
         .mockRejectedValueOnce(new Error('Not found'))
         .mockRejectedValueOnce(new Error('Not found'))
@@ -223,6 +264,7 @@ describe('FileWriter', () => {
 
     it('falls back to action.yaml when action.yml is not found', async () => {
       const actionYml = `name: Test\nruns:\n  using: composite\n  steps:\n    - run: echo hi\n      shell: bash\n`
+      mockGetCommit('sha333')
       // First call (action.yml) fails, second (action.yaml) succeeds
       github.mockOctokit.rest.repos.getContent
         .mockRejectedValueOnce(new Error('Not found'))
@@ -254,14 +296,12 @@ describe('FileWriter', () => {
       const outerAction = `name: Outer\nruns:\n  using: composite\n  steps:\n    - uses: actions/cache@v3\n    - run: echo outer\n      shell: bash\n`
       const innerAction = `name: Inner\nruns:\n  using: node20\n  main: index.js\n`
 
-      // First call: fetch outer action (action.yml)
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(outerAction).toString('base64') }
-      })
-      // Second call: fetch inner action (actions/cache action.yml)
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(innerAction).toString('base64') }
-      })
+      // Outer action: resolve ref + fetch content
+      mockGetCommit('outersha')
+      mockGetContent(outerAction)
+      // Inner action: resolve ref + fetch content
+      mockGetCommit('innersha')
+      mockGetContent(innerAction)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -278,7 +318,7 @@ describe('FileWriter', () => {
 
       expect(result.actionsWritten).toBe(2)
 
-      // Both files should exist
+      // Both files should exist at SHA-based paths
       expect(
         fs.existsSync(
           path.join(
@@ -288,6 +328,7 @@ describe('FileWriter', () => {
             'external',
             'some-org',
             'setup-action',
+            'outersha',
             'action.yml'
           )
         )
@@ -301,6 +342,7 @@ describe('FileWriter', () => {
             'external',
             'actions',
             'cache',
+            'innersha',
             'action.yml'
           )
         )
@@ -311,14 +353,12 @@ describe('FileWriter', () => {
       const workflowYml = `name: CI\non:\n  workflow_call:\njobs:\n  inner:\n    uses: other-org/repo/.github/workflows/build.yml@v1\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n`
       const innerWorkflowYml = `name: Build\non:\n  workflow_call:\njobs:\n  compile:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n`
 
-      // First call: fetch outer workflow
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(workflowYml).toString('base64') }
-      })
-      // Second call: fetch inner workflow
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(innerWorkflowYml).toString('base64') }
-      })
+      // Outer workflow: resolve ref + fetch content
+      mockGetCommit('outerworkflowsha')
+      mockGetContent(workflowYml)
+      // Inner workflow: resolve ref + fetch content
+      mockGetCommit('innerworkflowsha')
+      mockGetContent(innerWorkflowYml)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -341,13 +381,12 @@ describe('FileWriter', () => {
       const actionA = `name: A\nruns:\n  using: composite\n  steps:\n    - uses: org/action-b@v1\n`
       const actionB = `name: B\nruns:\n  using: composite\n  steps:\n    - uses: org/action-a@v1\n`
 
-      github.mockOctokit.rest.repos.getContent
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from(actionA).toString('base64') }
-        })
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from(actionB).toString('base64') }
-        })
+      // action-a: resolve + fetch
+      mockGetCommit('sha-a')
+      mockGetContent(actionA)
+      // action-b: resolve + fetch
+      mockGetCommit('sha-b')
+      mockGetContent(actionB)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -368,9 +407,8 @@ describe('FileWriter', () => {
 
     it('handles invalid YAML content gracefully', async () => {
       const invalidYaml = `{invalid: yaml: content: [\n`
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(invalidYaml).toString('base64') }
-      })
+      mockGetCommit('sha444')
+      mockGetContent(invalidYaml)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -393,13 +431,12 @@ describe('FileWriter', () => {
       const actionYml = `name: Test\nruns:\n  using: composite\n  steps:\n    - uses: ./local-step\n    - uses: actions/checkout@v4\n`
       const checkoutYml = `name: Checkout\nruns:\n  using: node20\n  main: index.js\n`
 
-      github.mockOctokit.rest.repos.getContent
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from(actionYml).toString('base64') }
-        })
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from(checkoutYml).toString('base64') }
-        })
+      // Outer: resolve + fetch
+      mockGetCommit('sha555')
+      mockGetContent(actionYml)
+      // Inner (actions/checkout): resolve + fetch
+      mockGetCommit('sha666')
+      mockGetContent(checkoutYml)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -422,13 +459,12 @@ describe('FileWriter', () => {
       const actionYml1 = `name: Checkout\nruns:\n  using: node20\n  main: index.js\n`
       const actionYml2 = `name: Cache\nruns:\n  using: node20\n  main: index.js\n`
 
-      github.mockOctokit.rest.repos.getContent
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from(actionYml1).toString('base64') }
-        })
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from(actionYml2).toString('base64') }
-        })
+      // checkout: resolve + fetch
+      mockGetCommit('sha-checkout')
+      mockGetContent(actionYml1)
+      // cache: resolve + fetch
+      mockGetCommit('sha-cache')
+      mockGetContent(actionYml2)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -457,13 +493,12 @@ describe('FileWriter', () => {
       const workflowYml = `name: CI\non:\n  workflow_call:\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: echo hi\n`
       const checkoutYml = `name: Checkout\nruns:\n  using: node20\n  main: index.js\n`
 
-      github.mockOctokit.rest.repos.getContent
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from(workflowYml).toString('base64') }
-        })
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from(checkoutYml).toString('base64') }
-        })
+      // Workflow: resolve + fetch
+      mockGetCommit('wfsha')
+      mockGetContent(workflowYml)
+      // Nested checkout action: resolve + fetch
+      mockGetCommit('checkoutsha')
+      mockGetContent(checkoutYml)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -483,13 +518,16 @@ describe('FileWriter', () => {
       expect(result.actionsWritten).toBe(1)
     })
 
-    it('warns and skips when different versions of same action conflict', async () => {
+    it('writes different versions of same action to separate SHA-based directories', async () => {
       const actionV5 = `name: Checkout v5\nruns:\n  using: node20\n  main: index.js\n`
+      const actionV6 = `name: Checkout v6\nruns:\n  using: node22\n  main: index.js\n`
 
-      // Only mock the first version - the second will be skipped before API call
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(actionV5).toString('base64') }
-      })
+      // v5: resolve + fetch
+      mockGetCommit('sha-v5-abc')
+      mockGetContent(actionV5)
+      // v6: resolve + fetch
+      mockGetCommit('sha-v6-def')
+      mockGetContent(actionV6)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -510,41 +548,64 @@ describe('FileWriter', () => {
         tempDir
       )
 
-      // First version wins, second is skipped
-      expect(result.actionsWritten).toBe(1)
-      expect(result.skipped).toBe(1)
+      // Both versions are written
+      expect(result.actionsWritten).toBe(2)
+      expect(result.errors).toHaveLength(0)
 
-      // File contains the first version
-      const filePath = path.join(
+      // v5 file
+      const v5Path = path.join(
         tempDir,
         '.github',
         'actions',
         'external',
         'actions',
         'checkout',
+        'sha-v5-abc',
         'action.yml'
       )
-      expect(fs.readFileSync(filePath, 'utf8')).toBe(actionV5)
+      expect(fs.existsSync(v5Path)).toBe(true)
+      expect(fs.readFileSync(v5Path, 'utf8')).toBe(actionV5)
 
-      // Warning was emitted
-      expect(core.warning).toHaveBeenCalledWith(
-        expect.stringContaining('Version conflict')
+      // v6 file
+      const v6Path = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'actions',
+        'checkout',
+        'sha-v6-def',
+        'action.yml'
       )
-      expect(core.warning).toHaveBeenCalledWith(
-        expect.stringContaining('actions/checkout@v6')
+      expect(fs.existsSync(v6Path)).toBe(true)
+      expect(fs.readFileSync(v6Path, 'utf8')).toBe(actionV6)
+
+      // mapping.yaml should contain both versions
+      const mappingPath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'mapping.yaml'
       )
-      expect(core.warning).toHaveBeenCalledWith(
-        expect.stringContaining('actions/checkout@v5')
-      )
+      expect(fs.existsSync(mappingPath)).toBe(true)
+      const mapping = yaml.parse(fs.readFileSync(mappingPath, 'utf8'))
+      expect(mapping['actions/checkout']).toEqual({
+        v5: 'sha-v5-abc',
+        v6: 'sha-v6-def'
+      })
     })
 
-    it('warns and skips when different versions of same callable workflow conflict', async () => {
+    it('writes different versions of same callable workflow to separate SHA-based directories', async () => {
       const workflowV1 = `name: CI v1\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v1\n`
+      const workflowV2 = `name: CI v2\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v2\n`
 
-      // Only mock the first version - the second will be skipped before API call
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(workflowV1).toString('base64') }
-      })
+      // v1: resolve + fetch
+      mockGetCommit('wf-sha-v1')
+      mockGetContent(workflowV1)
+      // v2: resolve + fetch
+      mockGetCommit('wf-sha-v2')
+      mockGetContent(workflowV2)
 
       const writer = new FileWriter('test-token')
       const result = await writer.writeExternalDependencies(
@@ -567,73 +628,68 @@ describe('FileWriter', () => {
         tempDir
       )
 
-      expect(result.workflowsWritten).toBe(1)
-      expect(result.skipped).toBe(1)
+      // Both versions are written
+      expect(result.workflowsWritten).toBe(2)
 
-      // File contains the first version
-      const filePath = path.join(
+      // v1 file
+      const v1Path = path.join(
         tempDir,
         '.github',
         'workflows',
         'external',
         'org',
         'repo',
+        'wf-sha-v1',
         '.github',
         'workflows',
         'ci.yml'
       )
-      expect(fs.readFileSync(filePath, 'utf8')).toBe(workflowV1)
+      expect(fs.existsSync(v1Path)).toBe(true)
+      expect(fs.readFileSync(v1Path, 'utf8')).toBe(workflowV1)
 
-      expect(core.warning).toHaveBeenCalledWith(
-        expect.stringContaining('Version conflict')
+      // v2 file
+      const v2Path = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'org',
+        'repo',
+        'wf-sha-v2',
+        '.github',
+        'workflows',
+        'ci.yml'
       )
-    })
+      expect(fs.existsSync(v2Path)).toBe(true)
+      expect(fs.readFileSync(v2Path, 'utf8')).toBe(workflowV2)
 
-    it('does not warn when same version is deduplicated by processedKeys', async () => {
-      const actionYml = `name: Test\nruns:\n  using: node20\n  main: index.js\n`
-      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
-        data: { content: Buffer.from(actionYml).toString('base64') }
+      // workflow mapping.yaml should contain both versions
+      const mappingPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'mapping.yaml'
+      )
+      expect(fs.existsSync(mappingPath)).toBe(true)
+      const mapping = yaml.parse(fs.readFileSync(mappingPath, 'utf8'))
+      expect(mapping['org/repo']).toEqual({
+        v1: 'wf-sha-v1',
+        v2: 'wf-sha-v2'
       })
-
-      const writer = new FileWriter('test-token')
-      const result = await writer.writeExternalDependencies(
-        [
-          {
-            owner: 'actions',
-            repo: 'checkout',
-            ref: 'v4',
-            uses: 'actions/checkout@v4'
-          },
-          {
-            owner: 'actions',
-            repo: 'checkout',
-            ref: 'v4',
-            uses: 'actions/checkout@v4'
-          }
-        ],
-        tempDir
-      )
-
-      // Same ref is deduplicated, not a conflict
-      expect(result.actionsWritten).toBe(1)
-      expect(result.skipped).toBe(0)
-      expect(core.warning).not.toHaveBeenCalled()
     })
 
-    it('allows different actions from same owner without conflict', async () => {
+    it('generates mapping.yaml with multiple repos', async () => {
       const checkoutYml = `name: Checkout\nruns:\n  using: node20\n  main: index.js\n`
       const cacheYml = `name: Cache\nruns:\n  using: node20\n  main: index.js\n`
 
-      github.mockOctokit.rest.repos.getContent
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from(checkoutYml).toString('base64') }
-        })
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from(cacheYml).toString('base64') }
-        })
+      mockGetCommit('checkout-sha')
+      mockGetContent(checkoutYml)
+      mockGetCommit('cache-sha')
+      mockGetContent(cacheYml)
 
       const writer = new FileWriter('test-token')
-      const result = await writer.writeExternalDependencies(
+      await writer.writeExternalDependencies(
         [
           {
             owner: 'actions',
@@ -651,10 +707,46 @@ describe('FileWriter', () => {
         tempDir
       )
 
-      // Different repos, no conflict
-      expect(result.actionsWritten).toBe(2)
-      expect(result.skipped).toBe(0)
-      expect(core.warning).not.toHaveBeenCalled()
+      const mappingPath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'mapping.yaml'
+      )
+      const mapping = yaml.parse(fs.readFileSync(mappingPath, 'utf8'))
+      expect(mapping['actions/checkout']).toEqual({ v4: 'checkout-sha' })
+      expect(mapping['actions/cache']).toEqual({ v4: 'cache-sha' })
+    })
+
+    it('does not write mapping.yaml when no dependencies are written', async () => {
+      // getCommit succeeds but action file not found
+      mockGetCommit('sha999')
+      github.mockOctokit.rest.repos.getContent
+        .mockRejectedValueOnce(new Error('Not found'))
+        .mockRejectedValueOnce(new Error('Not found'))
+
+      const writer = new FileWriter('test-token')
+      await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'actions',
+            repo: 'cache',
+            ref: 'v4',
+            uses: 'actions/cache@v4'
+          }
+        ],
+        tempDir
+      )
+
+      const mappingPath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'mapping.yaml'
+      )
+      expect(fs.existsSync(mappingPath)).toBe(false)
     })
   })
 })
