@@ -63,13 +63,11 @@ export class WorkflowParser {
    * Scans a directory for workflow files and extracts all action dependencies
    *
    * @param workflowDir Directory containing workflow files
-   * @param additionalPaths Additional paths to scan for composite actions
-   * @param repoRoot Root directory of the repository (required for additional paths and recursion)
+   * @param repoRoot Root directory of the repository (required for recursion)
    * @returns Object with action dependencies and docker dependencies
    */
   async parseWorkflowDirectory(
     workflowDir: string,
-    additionalPaths: string[] = [],
     repoRoot?: string
   ): Promise<{
     actionDependencies: ActionDependency[]
@@ -166,57 +164,6 @@ export class WorkflowParser {
             dockerDependencies.push(...remoteDeps.dockerDependencies)
           }
         }
-      }
-    }
-
-    // Scan additional paths for composite actions
-    if (repoRoot && additionalPaths.length > 0) {
-      for (const additionalPath of additionalPaths) {
-        const fullPath = path.join(repoRoot, additionalPath)
-        const files = this.findWorkflowFiles(fullPath)
-
-        for (const file of files) {
-          if (processedFiles.has(file) || !this.isCompositeAction(file)) {
-            continue
-          }
-
-          processedFiles.add(file)
-          const result = await this.parseWorkflowFile(file, repoRoot)
-          dependencies.push(...result.dependencies)
-          dockerDependencies.push(...result.dockerDependencies)
-
-          // Process nested local actions
-          for (const localAction of result.localActions) {
-            const resolvedPath = this.resolveLocalPath(
-              file,
-              localAction,
-              repoRoot
-            )
-            if (resolvedPath) {
-              const actionYml = this.findActionYml(resolvedPath)
-              if (
-                actionYml &&
-                !processedFiles.has(actionYml) &&
-                this.isCompositeAction(actionYml)
-              ) {
-                filesToProcess.push(actionYml)
-              }
-            }
-          }
-        }
-      }
-
-      // Continue processing any newly discovered files
-      while (filesToProcess.length > 0) {
-        const filePath = filesToProcess.shift()
-        if (!filePath || processedFiles.has(filePath)) {
-          continue
-        }
-
-        processedFiles.add(filePath)
-        const result = await this.parseWorkflowFile(filePath, repoRoot)
-        dependencies.push(...result.dependencies)
-        dockerDependencies.push(...result.dockerDependencies)
       }
     }
 

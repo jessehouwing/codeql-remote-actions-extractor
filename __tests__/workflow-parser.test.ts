@@ -704,7 +704,6 @@ runs:
 
       const result = await parser.parseWorkflowDirectory(
         path.join(tempDir, '.github', 'workflows'),
-        [],
         tempDir
       )
 
@@ -717,56 +716,6 @@ runs:
         uses: 'actions/cache@v3'
       })
       expect(result.actionDependencies[0].sourcePath).toBeDefined()
-    })
-
-    it('Scans additional paths for composite actions', async () => {
-      // Create workflow directory
-      fs.mkdirSync(path.join(tempDir, '.github', 'workflows'), {
-        recursive: true
-      })
-      fs.writeFileSync(
-        path.join(tempDir, '.github', 'workflows', 'test.yml'),
-        `
-name: Test
-on: push
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-`
-      )
-
-      // Create composite action in additional path
-      fs.mkdirSync(path.join(tempDir, 'custom', 'actions'), {
-        recursive: true
-      })
-      fs.writeFileSync(
-        path.join(tempDir, 'custom', 'actions', 'action.yml'),
-        `
-name: Custom Action
-description: Test action
-runs:
-  using: composite
-  steps:
-    - uses: actions/cache@v3
-`
-      )
-
-      const result = await parser.parseWorkflowDirectory(
-        path.join(tempDir, '.github', 'workflows'),
-        ['custom/actions'],
-        tempDir
-      )
-
-      // Should find dependencies from both workflow and additional paths
-      expect(result.actionDependencies).toHaveLength(2)
-      expect(
-        result.actionDependencies.find((d) => d.uses === 'actions/checkout@v4')
-      ).toBeDefined()
-      expect(
-        result.actionDependencies.find((d) => d.uses === 'actions/cache@v3')
-      ).toBeDefined()
     })
 
     it('Scans root action.yml file if it is a composite action', async () => {
@@ -803,7 +752,6 @@ runs:
 
       const result = await parser.parseWorkflowDirectory(
         path.join(tempDir, '.github', 'workflows'),
-        [],
         tempDir
       )
 
@@ -855,7 +803,6 @@ runs:
 
       const result = await parser.parseWorkflowDirectory(
         path.join(tempDir, '.github', 'workflows'),
-        [],
         tempDir
       )
 
@@ -903,7 +850,6 @@ runs:
 
       const result = await parser.parseWorkflowDirectory(
         path.join(tempDir, '.github', 'workflows'),
-        [],
         tempDir
       )
 
@@ -1197,7 +1143,6 @@ jobs:
 
       const result = await parserWithToken.parseWorkflowDirectory(
         tempDir,
-        [],
         tempDir
       )
 
@@ -1287,7 +1232,6 @@ jobs:
 
       const result = await parserWithToken.parseWorkflowDirectory(
         tempDir,
-        [],
         tempDir
       )
 
@@ -1369,7 +1313,6 @@ jobs:
 
       const result = await parserWithToken.parseWorkflowDirectory(
         tempDir,
-        [],
         tempDir
       )
 
@@ -1418,7 +1361,6 @@ jobs:
 
       const result = await parserWithToken.parseWorkflowDirectory(
         tempDir,
-        [],
         tempDir
       )
 
@@ -1494,7 +1436,6 @@ jobs:
 
       const result = await parserWithToken.parseWorkflowDirectory(
         tempDir,
-        [],
         tempDir
       )
 
@@ -1563,7 +1504,6 @@ jobs:
 
       const result = await parserWithToken.parseWorkflowDirectory(
         tempDir,
-        [],
         tempDir
       )
 
@@ -1627,7 +1567,7 @@ jobs:
       const workflowFile = path.join(tempDir, 'test.yml')
       fs.writeFileSync(workflowFile, workflowContent)
 
-      await parserWithToken.parseWorkflowDirectory(tempDir, [], tempDir)
+      await parserWithToken.parseWorkflowDirectory(tempDir, tempDir)
 
       // Verify getContent was called with the correct ref
       expect(mockGetContent).toHaveBeenCalledWith({
@@ -1686,7 +1626,7 @@ jobs:
       const workflowFile = path.join(tempDir, 'test.yml')
       fs.writeFileSync(workflowFile, workflowContent)
 
-      await parserWithToken.parseWorkflowDirectory(tempDir, [], tempDir)
+      await parserWithToken.parseWorkflowDirectory(tempDir, tempDir)
 
       // Verify getContent was called with the correct ref
       expect(mockGetContent).toHaveBeenCalledWith({
@@ -1746,7 +1686,7 @@ jobs:
       const workflowFile = path.join(tempDir, 'test.yml')
       fs.writeFileSync(workflowFile, workflowContent)
 
-      await parserWithToken.parseWorkflowDirectory(tempDir, [], tempDir)
+      await parserWithToken.parseWorkflowDirectory(tempDir, tempDir)
 
       // Verify getContent was called with the SHA
       expect(mockGetContent).toHaveBeenCalledWith({
@@ -1807,7 +1747,6 @@ jobs:
 
       const result = await parserWithToken.parseWorkflowDirectory(
         tempDir,
-        [],
         tempDir
       )
 
@@ -1889,7 +1828,7 @@ jobs:
       const workflowFile = path.join(tempDir, 'test.yml')
       fs.writeFileSync(workflowFile, workflowContent)
 
-      await parserWithToken.parseWorkflowDirectory(tempDir, [], tempDir)
+      await parserWithToken.parseWorkflowDirectory(tempDir, tempDir)
 
       // Verify getContent was called with the correct nested path
       expect(mockGetContent).toHaveBeenCalledWith({
@@ -2024,7 +1963,6 @@ jobs:
 
       const result = await parserWithToken.parseWorkflowDirectory(
         tempDir,
-        [],
         tempDir
       )
 
@@ -2173,7 +2111,6 @@ jobs:
 
       const result = await parserWithToken.parseWorkflowDirectory(
         tempDir,
-        [],
         tempDir
       )
 

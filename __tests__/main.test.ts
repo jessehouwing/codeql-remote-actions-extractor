@@ -27,7 +27,6 @@ describe('main.ts', () => {
       const inputs: Record<string, string> = {
         token: 'test-token',
         'workflow-directory': tempDir,
-        'additional-paths': '',
         'public-github-token': ''
       }
       return inputs[name] || ''

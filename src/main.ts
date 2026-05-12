@@ -13,29 +13,16 @@ export async function run(): Promise<void> {
     const workflowDirectory = core.getInput('workflow-directory', {
       required: true
     })
-    const additionalPathsInput = core.getInput('additional-paths')
     const publicGitHubToken = core.getInput('public-github-token')
-
-    // Parse additional paths (comma or newline separated)
-    const additionalPaths = additionalPathsInput
-      ? additionalPathsInput
-          .split(/[,\n]/)
-          .map((p) => p.trim())
-          .filter((p) => p.length > 0)
-      : []
 
     const repoRoot = process.env.GITHUB_WORKSPACE || process.cwd()
 
     core.info(`Scanning workflow directory: ${workflowDirectory}`)
-    if (additionalPaths.length > 0) {
-      core.info(`Additional paths: ${additionalPaths.join(', ')}`)
-    }
 
     // Step 1: Parse workflows to discover all remote dependencies
     const parser = new WorkflowParser(token, publicGitHubToken || undefined)
     const { actionDependencies } = await parser.parseWorkflowDirectory(
       workflowDirectory,
-      additionalPaths,
       repoRoot
     )
 
