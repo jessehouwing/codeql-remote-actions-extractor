@@ -21,12 +21,15 @@ export class FileWriter {
   private processedKeys: Set<string> = new Set()
   private actionMappings: MappingEntries = {}
   private workflowMappings: MappingEntries = {}
+  private legacyShas: Map<string, string> = new Map()
+  private mode: string
 
-  constructor(token: string, publicGitHubToken?: string) {
+  constructor(token: string, publicGitHubToken?: string, mode?: string) {
     this.octokitProvider = new OctokitProvider({
       token,
       publicGitHubToken
     })
+    this.mode = mode || ''
   }
 
   async writeExternalDependencies(
@@ -126,6 +129,34 @@ export class FileWriter {
       this.actionMappings[ownerRepo] = {}
     }
     this.actionMappings[ownerRepo][dep.ref] = sha
+
+    // Legacy mode: also write to SHA-less path for the first encountered version
+    if (this.mode === 'legacy') {
+      const legacyKey = dep.actionPath
+        ? `${ownerRepo}/${dep.actionPath}`
+        : ownerRepo
+      const existingSha = this.legacyShas.get(legacyKey)
+      if (existingSha === undefined) {
+        // First encounter: write to legacy (SHA-less) path
+        this.legacyShas.set(legacyKey, sha)
+        const legacyDir = path.join(
+          repoRoot,
+          '.github',
+          'actions',
+          'external',
+          dep.actionPath ? `${ownerRepo}/${dep.actionPath}` : ownerRepo
+        )
+        fs.mkdirSync(legacyDir, { recursive: true })
+        fs.writeFileSync(path.join(legacyDir, 'action.yml'), content, 'utf8')
+        core.info(
+          `Legacy: wrote ${dep.uses} -> ${path.relative(repoRoot, legacyDir)}/action.yml`
+        )
+      } else if (existingSha !== sha) {
+        core.warning(
+          `Legacy mode: ${legacyKey} was already written at SHA ${existingSha}, but a different version (${sha}) was also referenced. The SHA-less path retains the first encountered version.`
+        )
+      }
+    }
 
     return await this.processNestedDependencies(content, repoRoot)
   }

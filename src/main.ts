@@ -14,6 +14,7 @@ export async function run(): Promise<void> {
       required: true
     })
     const publicGitHubToken = core.getInput('public-github-token')
+    const mode = core.getInput('mode')
 
     const repoRoot = process.env.GITHUB_WORKSPACE || process.cwd()
 
@@ -40,7 +41,7 @@ export async function run(): Promise<void> {
     }
 
     // Step 3: Download and write to expected directories
-    const writer = new FileWriter(token, publicGitHubToken || undefined)
+    const writer = new FileWriter(token, publicGitHubToken || undefined, mode)
     const result = await writer.writeExternalDependencies(remoteDeps, repoRoot)
 
     core.info(

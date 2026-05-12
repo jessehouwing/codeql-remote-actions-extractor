@@ -26,6 +26,15 @@ inputs:
       up actions not available on the local instance.
     required: false
     default: ''
+  mode:
+    description: >
+      Operating mode. When set to "legacy", the action also writes the first
+      encountered version of each composite action to the SHA-less path
+      `.github/actions/external/{owner}/{repo}/[actionPath/]action.yml`. If a
+      different version of the same action is also referenced, a warning is
+      logged but processing continues.
+    required: false
+    default: ''
 
 outputs:
   actions-count:
