@@ -47618,11 +47618,15 @@ class FileWriter {
     processedKeys = new Set();
     actionMappings = {};
     workflowMappings = {};
-    constructor(token, publicGitHubToken) {
+    legacyActionShas = new Map();
+    legacyWorkflowShas = new Map();
+    mode;
+    constructor(token, publicGitHubToken, mode) {
         this.octokitProvider = new OctokitProvider({
             token,
             publicGitHubToken
         });
+        this.mode = mode || '';
     }
     async writeExternalDependencies(dependencies, repoRoot) {
         const result = {
@@ -47697,6 +47701,24 @@ class FileWriter {
             this.actionMappings[ownerRepo] = {};
         }
         this.actionMappings[ownerRepo][dep.ref] = sha;
+        // Legacy mode: also write to SHA-less path for the first encountered version
+        if (this.mode === 'legacy') {
+            const legacyKey = dep.actionPath
+                ? `${ownerRepo}/${dep.actionPath}`
+                : ownerRepo;
+            const existingSha = this.legacyActionShas.get(legacyKey);
+            if (existingSha === undefined) {
+                // First encounter: write to legacy (SHA-less) path
+                this.legacyActionShas.set(legacyKey, sha);
+                const legacyDir = path.join(repoRoot, '.github', 'actions', 'external', dep.actionPath ? `${ownerRepo}/${dep.actionPath}` : ownerRepo);
+                fs.mkdirSync(legacyDir, { recursive: true });
+                fs.writeFileSync(path.join(legacyDir, 'action.yml'), content, 'utf8');
+                info(`Legacy: wrote ${dep.uses} -> ${path.relative(repoRoot, legacyDir)}/action.yml`);
+            }
+            else if (existingSha !== sha) {
+                warning(`Legacy mode: ${legacyKey} was already written at SHA ${existingSha}, but a different version (${sha}) was also referenced. The SHA-less path retains the first encountered version.`);
+            }
+        }
         return await this.processNestedDependencies(content, repoRoot);
     }
     async writeCallableWorkflow(dep, repoRoot) {
@@ -47726,6 +47748,21 @@ class FileWriter {
             this.workflowMappings[ownerRepo] = {};
         }
         this.workflowMappings[ownerRepo][dep.ref] = sha;
+        // Legacy mode: also write to SHA-less path for the first encountered version
+        if (this.mode === 'legacy') {
+            const legacyKey = `${ownerRepo}/${workflowPath}`;
+            const existingSha = this.legacyWorkflowShas.get(legacyKey);
+            if (existingSha === undefined) {
+                this.legacyWorkflowShas.set(legacyKey, sha);
+                const legacyPath = path.join(repoRoot, '.github', 'workflows', 'external', dep.owner, dep.repo, workflowPath);
+                fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
+                fs.writeFileSync(legacyPath, content, 'utf8');
+                info(`Legacy: wrote ${dep.uses} -> ${path.relative(repoRoot, legacyPath)}`);
+            }
+            else if (existingSha !== sha) {
+                warning(`Legacy mode: ${legacyKey} was already written at SHA ${existingSha}, but a different version (${sha}) was also referenced. The SHA-less path retains the first encountered version.`);
+            }
+        }
         return await this.processNestedDependencies(content, repoRoot);
     }
     writeMappingFiles(repoRoot) {
@@ -47842,6 +47879,7 @@ async function run() {
             required: true
         });
         const publicGitHubToken = getInput('public-github-token');
+        const mode = getInput('mode');
         const repoRoot = process.env.GITHUB_WORKSPACE || process.cwd();
         info(`Scanning workflow directory: ${workflowDirectory}`);
         // Step 1: Parse workflows to discover all remote dependencies
@@ -47857,7 +47895,7 @@ async function run() {
             return;
         }
         // Step 3: Download and write to expected directories
-        const writer = new FileWriter(token, publicGitHubToken || undefined);
+        const writer = new FileWriter(token, publicGitHubToken || undefined, mode);
         const result = await writer.writeExternalDependencies(remoteDeps, repoRoot);
         info(`Downloaded ${result.actionsWritten} composite actions to .github/actions/external/`);
         info(`Downloaded ${result.workflowsWritten} callable workflows to .github/workflows/external/`);

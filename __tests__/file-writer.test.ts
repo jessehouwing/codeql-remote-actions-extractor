@@ -1021,4 +1021,350 @@ describe('FileWriter', () => {
       expect(fs.existsSync(mappingPath)).toBe(false)
     })
   })
+
+  describe('legacy mode', () => {
+    it('writes to SHA-less path for the first encountered composite action', async () => {
+      const actionYml = `name: Checkout\nruns:\n  using: node20\n  main: index.js\n`
+      mockGetCommit('abc123')
+      mockGetContent(actionYml)
+
+      const writer = new FileWriter('test-token', undefined, 'legacy')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v4',
+            uses: 'actions/checkout@v4'
+          }
+        ],
+        tempDir
+      )
+
+      expect(result.actionsWritten).toBe(1)
+      expect(result.errors).toHaveLength(0)
+
+      // SHA-based path should exist
+      const shaPath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'actions',
+        'checkout',
+        'abc123',
+        'action.yml'
+      )
+      expect(fs.existsSync(shaPath)).toBe(true)
+
+      // Legacy (SHA-less) path should also exist
+      const legacyPath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'actions',
+        'checkout',
+        'action.yml'
+      )
+      expect(fs.existsSync(legacyPath)).toBe(true)
+      expect(fs.readFileSync(legacyPath, 'utf8')).toBe(actionYml)
+    })
+
+    it('writes to SHA-less path for action with actionPath in legacy mode', async () => {
+      const actionYml = `name: Setup\nruns:\n  using: composite\n  steps:\n    - run: echo hi\n      shell: bash\n`
+      mockGetCommit('sha-setup')
+      mockGetContent(actionYml)
+
+      const writer = new FileWriter('test-token', undefined, 'legacy')
+      await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/actions/setup',
+            ref: 'main',
+            uses: 'org/repo/.github/actions/setup@main'
+          }
+        ],
+        tempDir
+      )
+
+      // Legacy path includes actionPath, no SHA segment
+      const legacyPath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'org',
+        'repo',
+        '.github',
+        'actions',
+        'setup',
+        'action.yml'
+      )
+      expect(fs.existsSync(legacyPath)).toBe(true)
+    })
+
+    it('warns when a different version is encountered in legacy mode but retains first version', async () => {
+      const actionV4 = `name: Checkout v4\nruns:\n  using: node20\n  main: index.js\n`
+      const actionV5 = `name: Checkout v5\nruns:\n  using: node22\n  main: index.js\n`
+
+      // v4 first
+      mockGetCommit('sha-v4')
+      mockGetContent(actionV4)
+      // v5 second
+      mockGetCommit('sha-v5')
+      mockGetContent(actionV5)
+
+      const writer = new FileWriter('test-token', undefined, 'legacy')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v4',
+            uses: 'actions/checkout@v4'
+          },
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v5',
+            uses: 'actions/checkout@v5'
+          }
+        ],
+        tempDir
+      )
+
+      // Both SHA-based paths should exist
+      expect(result.actionsWritten).toBe(2)
+      expect(result.errors).toHaveLength(0)
+
+      // Warning should be emitted for the second version
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('actions/checkout')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('sha-v4')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('sha-v5')
+      )
+
+      // Legacy path contains the first (v4) version
+      const legacyPath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'actions',
+        'checkout',
+        'action.yml'
+      )
+      expect(fs.existsSync(legacyPath)).toBe(true)
+      expect(fs.readFileSync(legacyPath, 'utf8')).toBe(actionV4)
+    })
+
+    it('writes callable workflows to SHA-less path for the first encountered version in legacy mode', async () => {
+      const workflowV1 = `name: CI v1\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v1\n`
+      mockGetCommit('wf-sha-v1')
+      mockGetContent(workflowV1)
+
+      const writer = new FileWriter('test-token', undefined, 'legacy')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'v1',
+            uses: 'org/repo/.github/workflows/ci.yml@v1'
+          }
+        ],
+        tempDir
+      )
+
+      expect(result.workflowsWritten).toBe(1)
+      expect(result.errors).toHaveLength(0)
+
+      const shaPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'org',
+        'repo',
+        'wf-sha-v1',
+        '.github',
+        'workflows',
+        'ci.yml'
+      )
+      expect(fs.existsSync(shaPath)).toBe(true)
+
+      const legacyPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'org',
+        'repo',
+        '.github',
+        'workflows',
+        'ci.yml'
+      )
+      expect(fs.existsSync(legacyPath)).toBe(true)
+      expect(fs.readFileSync(legacyPath, 'utf8')).toBe(workflowV1)
+    })
+
+    it('warns when a different callable workflow version is encountered in legacy mode but retains first version', async () => {
+      const workflowV1 = `name: CI v1\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v1\n`
+      const workflowV2 = `name: CI v2\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v2\n`
+      mockGetCommit('wf-sha-v1')
+      mockGetContent(workflowV1)
+      mockGetCommit('wf-sha-v2')
+      mockGetContent(workflowV2)
+
+      const writer = new FileWriter('test-token', undefined, 'legacy')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'v1',
+            uses: 'org/repo/.github/workflows/ci.yml@v1'
+          },
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'v2',
+            uses: 'org/repo/.github/workflows/ci.yml@v2'
+          }
+        ],
+        tempDir
+      )
+
+      expect(result.workflowsWritten).toBe(2)
+      expect(result.errors).toHaveLength(0)
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('org/repo/.github/workflows/ci.yml')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('wf-sha-v1')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('wf-sha-v2')
+      )
+
+      const legacyPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'org',
+        'repo',
+        '.github',
+        'workflows',
+        'ci.yml'
+      )
+      expect(fs.readFileSync(legacyPath, 'utf8')).toBe(workflowV1)
+    })
+
+    it('does not write SHA-less path when mode is not legacy', async () => {
+      const actionYml = `name: Checkout\nruns:\n  using: node20\n  main: index.js\n`
+      mockGetCommit('abc123')
+      mockGetContent(actionYml)
+
+      const writer = new FileWriter('test-token')
+      await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v4',
+            uses: 'actions/checkout@v4'
+          }
+        ],
+        tempDir
+      )
+
+      const legacyPath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'actions',
+        'checkout',
+        'action.yml'
+      )
+      // SHA-less path should NOT exist in default mode
+      expect(fs.existsSync(legacyPath)).toBe(false)
+    })
+
+    it('does not write callable workflow SHA-less path when mode is not legacy', async () => {
+      const workflowV1 = `name: CI v1\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v1\n`
+      mockGetCommit('wf-sha-v1')
+      mockGetContent(workflowV1)
+
+      const writer = new FileWriter('test-token')
+      await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'v1',
+            uses: 'org/repo/.github/workflows/ci.yml@v1'
+          }
+        ],
+        tempDir
+      )
+
+      const legacyPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'org',
+        'repo',
+        '.github',
+        'workflows',
+        'ci.yml'
+      )
+      expect(fs.existsSync(legacyPath)).toBe(false)
+    })
+
+    it('does not warn when same SHA is encountered twice in legacy mode', async () => {
+      const actionYml = `name: Checkout\nruns:\n  using: node20\n  main: index.js\n`
+      // Both refs resolve to the same SHA
+      mockGetCommit('same-sha')
+      mockGetContent(actionYml)
+      mockGetCommit('same-sha')
+      mockGetContent(actionYml)
+
+      const writer = new FileWriter('test-token', undefined, 'legacy')
+      await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v4',
+            uses: 'actions/checkout@v4'
+          },
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v4.1',
+            uses: 'actions/checkout@v4.1'
+          }
+        ],
+        tempDir
+      )
+
+      expect(core.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('actions/checkout')
+      )
+    })
+  })
 })

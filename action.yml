@@ -26,6 +26,17 @@ inputs:
       up actions not available on the local instance.
     required: false
     default: ''
+  mode:
+    description: >
+      Operating mode. When set to "legacy", the action also writes the first
+      encountered version of each composite action and callable workflow to the
+      SHA-less paths
+      `.github/actions/external/{owner}/{repo}/[actionPath/]action.yml` and
+      `.github/workflows/external/{owner}/{repo}/{path}/file.yml`. If a
+      different version of the same dependency is also referenced, a warning is
+      logged but processing continues.
+    required: false
+    default: ''
 
 outputs:
   actions-count:
