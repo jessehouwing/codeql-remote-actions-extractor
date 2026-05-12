@@ -1,0 +1,27 @@
+# Schema file for codeql-remote-actions-extractor validation
+# This file provides advanced validation for action inputs and outputs
+# See: https://github.com/jessehouwing/actions-example-checker
+
+# Validate inputs with explicit types
+inputs:
+  # GitHub token - string input (no pattern needed for secrets)
+  token:
+    type: string
+
+  # Directory path for workflows
+  workflow-directory:
+    type: string
+
+  # GitHub token for public GitHub access on GHES/EMU/DR
+  public-github-token:
+    type: string
+
+# Validate outputs
+outputs:
+  # Number of composite actions downloaded
+  actions-count:
+    type: number
+
+  # Number of callable workflows downloaded
+  workflows-count:
+    type: number
