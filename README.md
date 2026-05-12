@@ -4,6 +4,8 @@ A GitHub Action that downloads remote composite actions and callable workflows
 into the directory structure expected by the CodeQL Actions extractor, enabling
 interprocedural analysis of third-party action internals.
 
+> **Remark**: This action assumes the following PR will eventually be merged in order to support several versions of the same composite action.
+
 ## Usage
 
 Add this action as a step **before** the CodeQL `analyze` step in your CodeQL
