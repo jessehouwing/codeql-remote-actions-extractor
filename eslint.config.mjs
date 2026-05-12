@@ -1,0 +1,61 @@
+// See: https://eslint.org/docs/latest/use/configure/configuration-files
+
+import js from '@eslint/js'
+import tseslint from 'typescript-eslint'
+import jest from 'eslint-plugin-jest'
+import prettier from 'eslint-plugin-prettier'
+import eslintConfigPrettier from 'eslint-config-prettier'
+import globals from 'globals'
+
+export default tseslint.config(
+  {
+    ignores: ['**/coverage', '**/dist', '**/linter', '**/node_modules']
+  },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  {
+    plugins: {
+      jest,
+      prettier
+    },
+
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.jest,
+        Atomics: 'readonly',
+        SharedArrayBuffer: 'readonly'
+      },
+
+      ecmaVersion: 2023,
+      sourceType: 'module',
+
+      parserOptions: {
+        projectService: {
+          allowDefaultProject: [
+            '__fixtures__/*.ts',
+            '__tests__/*.ts',
+            'eslint.config.mjs',
+            'jest.config.js',
+            'rollup.config.ts'
+          ],
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 15
+        },
+        tsconfigRootDir: import.meta.dirname
+      }
+    },
+
+    rules: {
+      camelcase: 'off',
+      'eslint-comments/no-use': 'off',
+      'eslint-comments/no-unused-disable': 'off',
+      'i18n-text/no-en': 'off',
+      'no-console': 'off',
+      'no-shadow': 'off',
+      'no-unused-vars': 'off',
+      'prettier/prettier': 'error'
+    }
+  },
+  jest.configs['flat/recommended'],
+  eslintConfigPrettier
+)
