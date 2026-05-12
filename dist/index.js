@@ -47652,6 +47652,7 @@ class WorkflowParser {
 class FileWriter {
     octokitProvider;
     processedKeys = new Set();
+    writtenPaths = new Map(); // targetPath -> uses string that wrote it
     constructor(token, publicGitHubToken) {
         this.octokitProvider = new OctokitProvider({
             token,
@@ -47662,6 +47663,7 @@ class FileWriter {
         const result = {
             actionsWritten: 0,
             workflowsWritten: 0,
+            skipped: 0,
             errors: []
         };
         for (const dep of dependencies) {
@@ -47671,21 +47673,29 @@ class FileWriter {
             this.processedKeys.add(key);
             try {
                 if (this.isCallableWorkflow(dep)) {
-                    const nestedResult = await this.writeCallableWorkflow(dep, repoRoot);
-                    result.workflowsWritten++;
-                    if (nestedResult) {
-                        result.actionsWritten += nestedResult.actionsWritten;
-                        result.workflowsWritten += nestedResult.workflowsWritten;
-                        result.errors.push(...nestedResult.errors);
+                    const writeResult = await this.writeCallableWorkflow(dep, repoRoot);
+                    if (writeResult === 'conflict') {
+                        result.skipped++;
+                    }
+                    else if (writeResult) {
+                        result.workflowsWritten++;
+                        result.actionsWritten += writeResult.actionsWritten;
+                        result.workflowsWritten += writeResult.workflowsWritten;
+                        result.skipped += writeResult.skipped;
+                        result.errors.push(...writeResult.errors);
                     }
                 }
                 else {
-                    const nestedResult = await this.writeCompositeAction(dep, repoRoot);
-                    if (nestedResult) {
+                    const writeResult = await this.writeCompositeAction(dep, repoRoot);
+                    if (writeResult === 'conflict') {
+                        result.skipped++;
+                    }
+                    else if (writeResult) {
                         result.actionsWritten++;
-                        result.actionsWritten += nestedResult.actionsWritten;
-                        result.workflowsWritten += nestedResult.workflowsWritten;
-                        result.errors.push(...nestedResult.errors);
+                        result.actionsWritten += writeResult.actionsWritten;
+                        result.workflowsWritten += writeResult.workflowsWritten;
+                        result.skipped += writeResult.skipped;
+                        result.errors.push(...writeResult.errors);
                     }
                 }
             }
@@ -47705,11 +47715,21 @@ class FileWriter {
             ? `${dep.owner}/${dep.repo}/${dep.actionPath}`
             : `${dep.owner}/${dep.repo}`;
         const targetDir = path.join(repoRoot, '.github', 'actions', 'external', basePath);
+        const targetFile = path.join(targetDir, 'action.yml');
+        // Check for version conflict at same target path
+        const existingUses = this.writtenPaths.get(targetFile);
+        if (existingUses) {
+            warning(`Version conflict: ${dep.uses} maps to the same path as ${existingUses} — ` +
+                `only ${existingUses} will be analyzed. ` +
+                `The CodeQL extractor does not support multiple versions of the same action.`);
+            return 'conflict';
+        }
         const content = await this.fetchActionFile(dep);
         if (!content)
             return null;
         fs.mkdirSync(targetDir, { recursive: true });
-        fs.writeFileSync(path.join(targetDir, 'action.yml'), content, 'utf8');
+        fs.writeFileSync(targetFile, content, 'utf8');
+        this.writtenPaths.set(targetFile, dep.uses);
         info(`Downloaded: ${dep.uses} -> ${path.relative(repoRoot, targetDir)}/action.yml`);
         return await this.processNestedDependencies(content, repoRoot);
     }
@@ -47719,6 +47739,14 @@ class FileWriter {
             return null;
         const workflowPath = match[1];
         const targetPath = path.join(repoRoot, '.github', 'workflows', 'external', dep.owner, dep.repo, workflowPath);
+        // Check for version conflict at same target path
+        const existingUses = this.writtenPaths.get(targetPath);
+        if (existingUses) {
+            warning(`Version conflict: ${dep.uses} maps to the same path as ${existingUses} — ` +
+                `only ${existingUses} will be analyzed. ` +
+                `The CodeQL extractor does not support multiple versions of the same action.`);
+            return 'conflict';
+        }
         const octokit = await this.octokitProvider.getOctokitForRepo(dep.owner, dep.repo);
         const { data } = await octokit.rest.repos.getContent({
             owner: dep.owner,
@@ -47731,6 +47759,7 @@ class FileWriter {
         const content = Buffer.from(data.content, 'base64').toString('utf8');
         fs.mkdirSync(path.dirname(targetPath), { recursive: true });
         fs.writeFileSync(targetPath, content, 'utf8');
+        this.writtenPaths.set(targetPath, dep.uses);
         info(`Downloaded: ${dep.uses} -> ${path.relative(repoRoot, targetPath)}`);
         return await this.processNestedDependencies(content, repoRoot);
     }
@@ -47759,6 +47788,7 @@ class FileWriter {
         const emptyResult = {
             actionsWritten: 0,
             workflowsWritten: 0,
+            skipped: 0,
             errors: []
         };
         let parsed;
@@ -47866,6 +47896,9 @@ async function run() {
         info(`Downloaded ${result.workflowsWritten} callable workflows to .github/workflows/external/`);
         if (result.errors.length > 0) {
             warning(`${result.errors.length} dependencies failed to download`);
+        }
+        if (result.skipped > 0) {
+            warning(`${result.skipped} dependencies skipped due to version conflicts (see warnings above)`);
         }
         setOutput('actions-count', result.actionsWritten);
         setOutput('workflows-count', result.workflowsWritten);

@@ -482,5 +482,179 @@ describe('FileWriter', () => {
       expect(result.workflowsWritten).toBe(1)
       expect(result.actionsWritten).toBe(1)
     })
+
+    it('warns and skips when different versions of same action conflict', async () => {
+      const actionV5 = `name: Checkout v5\nruns:\n  using: node20\n  main: index.js\n`
+
+      // Only mock the first version - the second will be skipped before API call
+      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
+        data: { content: Buffer.from(actionV5).toString('base64') }
+      })
+
+      const writer = new FileWriter('test-token')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v5',
+            uses: 'actions/checkout@v5'
+          },
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v6',
+            uses: 'actions/checkout@v6'
+          }
+        ],
+        tempDir
+      )
+
+      // First version wins, second is skipped
+      expect(result.actionsWritten).toBe(1)
+      expect(result.skipped).toBe(1)
+
+      // File contains the first version
+      const filePath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'actions',
+        'checkout',
+        'action.yml'
+      )
+      expect(fs.readFileSync(filePath, 'utf8')).toBe(actionV5)
+
+      // Warning was emitted
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('Version conflict')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('actions/checkout@v6')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('actions/checkout@v5')
+      )
+    })
+
+    it('warns and skips when different versions of same callable workflow conflict', async () => {
+      const workflowV1 = `name: CI v1\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v1\n`
+
+      // Only mock the first version - the second will be skipped before API call
+      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
+        data: { content: Buffer.from(workflowV1).toString('base64') }
+      })
+
+      const writer = new FileWriter('test-token')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'v1',
+            uses: 'org/repo/.github/workflows/ci.yml@v1'
+          },
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'v2',
+            uses: 'org/repo/.github/workflows/ci.yml@v2'
+          }
+        ],
+        tempDir
+      )
+
+      expect(result.workflowsWritten).toBe(1)
+      expect(result.skipped).toBe(1)
+
+      // File contains the first version
+      const filePath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'org',
+        'repo',
+        '.github',
+        'workflows',
+        'ci.yml'
+      )
+      expect(fs.readFileSync(filePath, 'utf8')).toBe(workflowV1)
+
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('Version conflict')
+      )
+    })
+
+    it('does not warn when same version is deduplicated by processedKeys', async () => {
+      const actionYml = `name: Test\nruns:\n  using: node20\n  main: index.js\n`
+      github.mockOctokit.rest.repos.getContent.mockResolvedValueOnce({
+        data: { content: Buffer.from(actionYml).toString('base64') }
+      })
+
+      const writer = new FileWriter('test-token')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v4',
+            uses: 'actions/checkout@v4'
+          },
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v4',
+            uses: 'actions/checkout@v4'
+          }
+        ],
+        tempDir
+      )
+
+      // Same ref is deduplicated, not a conflict
+      expect(result.actionsWritten).toBe(1)
+      expect(result.skipped).toBe(0)
+      expect(core.warning).not.toHaveBeenCalled()
+    })
+
+    it('allows different actions from same owner without conflict', async () => {
+      const checkoutYml = `name: Checkout\nruns:\n  using: node20\n  main: index.js\n`
+      const cacheYml = `name: Cache\nruns:\n  using: node20\n  main: index.js\n`
+
+      github.mockOctokit.rest.repos.getContent
+        .mockResolvedValueOnce({
+          data: { content: Buffer.from(checkoutYml).toString('base64') }
+        })
+        .mockResolvedValueOnce({
+          data: { content: Buffer.from(cacheYml).toString('base64') }
+        })
+
+      const writer = new FileWriter('test-token')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'actions',
+            repo: 'checkout',
+            ref: 'v4',
+            uses: 'actions/checkout@v4'
+          },
+          {
+            owner: 'actions',
+            repo: 'cache',
+            ref: 'v4',
+            uses: 'actions/cache@v4'
+          }
+        ],
+        tempDir
+      )
+
+      // Different repos, no conflict
+      expect(result.actionsWritten).toBe(2)
+      expect(result.skipped).toBe(0)
+      expect(core.warning).not.toHaveBeenCalled()
+    })
   })
 })
