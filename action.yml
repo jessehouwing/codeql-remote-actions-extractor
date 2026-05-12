@@ -1,0 +1,44 @@
+name: 'Download CodeQL Actions Dependencies'
+description: >
+  Downloads remote composite actions and callable workflows into the
+  directory structure expected by the CodeQL Actions extractor, enabling
+  interprocedural analysis of third-party action internals.
+author: 'Jesse Houwing'
+branding:
+  icon: download
+  color: blue
+
+inputs:
+  token:
+    description: >
+      GitHub token with contents:read for fetching remote action/workflow
+      source files. For private actions in other repos, use a PAT or
+      GitHub App token with appropriate access.
+    required: true
+    default: ${{ github.token }}
+  workflow-directory:
+    description: Directory containing workflow files to scan
+    required: false
+    default: .github/workflows
+  additional-paths:
+    description: >
+      Additional paths to scan for composite actions and callable workflows
+      (comma or newline separated)
+    required: false
+    default: ''
+  public-github-token:
+    description: >
+      GitHub token for public GitHub when running on GHES/EMU/DR.
+      Used to look up actions not available on the local instance.
+    required: false
+    default: ''
+
+outputs:
+  actions-count:
+    description: Number of composite actions downloaded
+  workflows-count:
+    description: Number of callable workflows downloaded
+
+runs:
+  using: node22
+  main: dist/index.js
