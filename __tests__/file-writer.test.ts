@@ -719,6 +719,216 @@ describe('FileWriter', () => {
       expect(mapping['actions/cache']).toEqual({ v4: 'cache-sha' })
     })
 
+    it('downloads full tree of composite actions calling composite actions (3 levels)', async () => {
+      // Level 1: org/action-a uses org/action-b
+      const actionA = `name: A\nruns:\n  using: composite\n  steps:\n    - uses: org/action-b@v1\n    - run: echo a\n      shell: bash\n`
+      // Level 2: org/action-b uses org/action-c
+      const actionB = `name: B\nruns:\n  using: composite\n  steps:\n    - uses: org/action-c@v1\n    - run: echo b\n      shell: bash\n`
+      // Level 3: org/action-c is a leaf
+      const actionC = `name: C\nruns:\n  using: composite\n  steps:\n    - run: echo c\n      shell: bash\n`
+
+      // action-a: resolve + fetch
+      mockGetCommit('sha-a')
+      mockGetContent(actionA)
+      // action-b: resolve + fetch (discovered from action-a)
+      mockGetCommit('sha-b')
+      mockGetContent(actionB)
+      // action-c: resolve + fetch (discovered from action-b)
+      mockGetCommit('sha-c')
+      mockGetContent(actionC)
+
+      const writer = new FileWriter('test-token')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'action-a',
+            ref: 'v1',
+            uses: 'org/action-a@v1'
+          }
+        ],
+        tempDir
+      )
+
+      // All 3 actions should be written
+      expect(result.actionsWritten).toBe(3)
+      expect(result.errors).toHaveLength(0)
+
+      // Verify all 3 files exist at correct SHA-based paths
+      for (const [repo, sha] of [
+        ['action-a', 'sha-a'],
+        ['action-b', 'sha-b'],
+        ['action-c', 'sha-c']
+      ]) {
+        const actionPath = path.join(
+          tempDir,
+          '.github',
+          'actions',
+          'external',
+          'org',
+          repo,
+          sha,
+          'action.yml'
+        )
+        expect(fs.existsSync(actionPath)).toBe(true)
+      }
+
+      // mapping.yaml should have all 3 entries
+      const mappingPath = path.join(
+        tempDir,
+        '.github',
+        'actions',
+        'external',
+        'mapping.yaml'
+      )
+      const mapping = yaml.parse(fs.readFileSync(mappingPath, 'utf8'))
+      expect(mapping['org/action-a']).toEqual({ v1: 'sha-a' })
+      expect(mapping['org/action-b']).toEqual({ v1: 'sha-b' })
+      expect(mapping['org/action-c']).toEqual({ v1: 'sha-c' })
+    })
+
+    it('downloads full tree of callable workflows calling callable workflows (3 levels)', async () => {
+      // Level 1: org/repo/ci.yml calls org/repo-b/build.yml
+      const workflowA = `name: CI\non:\n  workflow_call:\njobs:\n  build:\n    uses: org/repo-b/.github/workflows/build.yml@main\n`
+      // Level 2: org/repo-b/build.yml calls org/repo-c/test.yml
+      const workflowB = `name: Build\non:\n  workflow_call:\njobs:\n  test:\n    uses: org/repo-c/.github/workflows/test.yml@main\n`
+      // Level 3: org/repo-c/test.yml is a leaf
+      const workflowC = `name: Test\non:\n  workflow_call:\njobs:\n  run:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo test\n`
+
+      // workflow-a: resolve + fetch
+      mockGetCommit('wf-sha-a')
+      mockGetContent(workflowA)
+      // workflow-b: resolve + fetch
+      mockGetCommit('wf-sha-b')
+      mockGetContent(workflowB)
+      // workflow-c: resolve + fetch
+      mockGetCommit('wf-sha-c')
+      mockGetContent(workflowC)
+
+      const writer = new FileWriter('test-token')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'main',
+            uses: 'org/repo/.github/workflows/ci.yml@main'
+          }
+        ],
+        tempDir
+      )
+
+      // All 3 workflows should be written
+      expect(result.workflowsWritten).toBe(3)
+      expect(result.errors).toHaveLength(0)
+
+      // Verify all 3 files exist
+      expect(
+        fs.existsSync(
+          path.join(tempDir, '.github', 'workflows', 'external', 'org', 'repo', 'wf-sha-a', '.github', 'workflows', 'ci.yml')
+        )
+      ).toBe(true)
+      expect(
+        fs.existsSync(
+          path.join(tempDir, '.github', 'workflows', 'external', 'org', 'repo-b', 'wf-sha-b', '.github', 'workflows', 'build.yml')
+        )
+      ).toBe(true)
+      expect(
+        fs.existsSync(
+          path.join(tempDir, '.github', 'workflows', 'external', 'org', 'repo-c', 'wf-sha-c', '.github', 'workflows', 'test.yml')
+        )
+      ).toBe(true)
+
+      // workflow mapping.yaml should have all repos
+      const mappingPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'mapping.yaml'
+      )
+      const mapping = yaml.parse(fs.readFileSync(mappingPath, 'utf8'))
+      expect(mapping['org/repo']).toEqual({ main: 'wf-sha-a' })
+      expect(mapping['org/repo-b']).toEqual({ main: 'wf-sha-b' })
+      expect(mapping['org/repo-c']).toEqual({ main: 'wf-sha-c' })
+    })
+
+    it('downloads full tree for mixed types: workflow → composite → composite', async () => {
+      // Level 1: callable workflow that uses a composite action in its steps
+      const workflow = `name: CI\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: org/setup@v1\n`
+      // Level 2: composite action that uses another composite action
+      const setupAction = `name: Setup\nruns:\n  using: composite\n  steps:\n    - uses: org/helper@v1\n    - run: echo setup\n      shell: bash\n`
+      // Level 3: leaf composite action
+      const helperAction = `name: Helper\nruns:\n  using: composite\n  steps:\n    - run: echo helper\n      shell: bash\n`
+
+      // workflow: resolve + fetch
+      mockGetCommit('wf-sha')
+      mockGetContent(workflow)
+      // org/setup composite: resolve + fetch
+      mockGetCommit('setup-sha')
+      mockGetContent(setupAction)
+      // org/helper composite: resolve + fetch
+      mockGetCommit('helper-sha')
+      mockGetContent(helperAction)
+
+      const writer = new FileWriter('test-token')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'main',
+            uses: 'org/repo/.github/workflows/ci.yml@main'
+          }
+        ],
+        tempDir
+      )
+
+      // 1 workflow + 2 composite actions
+      expect(result.workflowsWritten).toBe(1)
+      expect(result.actionsWritten).toBe(2)
+      expect(result.errors).toHaveLength(0)
+
+      // Verify workflow file
+      expect(
+        fs.existsSync(
+          path.join(tempDir, '.github', 'workflows', 'external', 'org', 'repo', 'wf-sha', '.github', 'workflows', 'ci.yml')
+        )
+      ).toBe(true)
+
+      // Verify both composite action files
+      expect(
+        fs.existsSync(
+          path.join(tempDir, '.github', 'actions', 'external', 'org', 'setup', 'setup-sha', 'action.yml')
+        )
+      ).toBe(true)
+      expect(
+        fs.existsSync(
+          path.join(tempDir, '.github', 'actions', 'external', 'org', 'helper', 'helper-sha', 'action.yml')
+        )
+      ).toBe(true)
+
+      // Both mapping files should exist
+      const actionMapping = yaml.parse(
+        fs.readFileSync(
+          path.join(tempDir, '.github', 'actions', 'external', 'mapping.yaml'),
+          'utf8'
+        )
+      )
+      expect(actionMapping['org/setup']).toEqual({ v1: 'setup-sha' })
+      expect(actionMapping['org/helper']).toEqual({ v1: 'helper-sha' })
+
+      const workflowMapping = yaml.parse(
+        fs.readFileSync(
+          path.join(tempDir, '.github', 'workflows', 'external', 'mapping.yaml'),
+          'utf8'
+        )
+      )
+      expect(workflowMapping['org/repo']).toEqual({ main: 'wf-sha' })
+    })
+
     it('does not write mapping.yaml when no dependencies are written', async () => {
       // getCommit succeeds but action file not found
       mockGetCommit('sha999')
