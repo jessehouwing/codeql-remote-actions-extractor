@@ -1,0 +1,1 @@
+# codeql-remote-actions-extractor
