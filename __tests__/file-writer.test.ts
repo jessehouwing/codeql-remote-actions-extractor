@@ -1165,6 +1165,112 @@ describe('FileWriter', () => {
       expect(fs.readFileSync(legacyPath, 'utf8')).toBe(actionV4)
     })
 
+    it('writes callable workflows to SHA-less path for the first encountered version in legacy mode', async () => {
+      const workflowV1 = `name: CI v1\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v1\n`
+      mockGetCommit('wf-sha-v1')
+      mockGetContent(workflowV1)
+
+      const writer = new FileWriter('test-token', undefined, 'legacy')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'v1',
+            uses: 'org/repo/.github/workflows/ci.yml@v1'
+          }
+        ],
+        tempDir
+      )
+
+      expect(result.workflowsWritten).toBe(1)
+      expect(result.errors).toHaveLength(0)
+
+      const shaPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'org',
+        'repo',
+        'wf-sha-v1',
+        '.github',
+        'workflows',
+        'ci.yml'
+      )
+      expect(fs.existsSync(shaPath)).toBe(true)
+
+      const legacyPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'org',
+        'repo',
+        '.github',
+        'workflows',
+        'ci.yml'
+      )
+      expect(fs.existsSync(legacyPath)).toBe(true)
+      expect(fs.readFileSync(legacyPath, 'utf8')).toBe(workflowV1)
+    })
+
+    it('warns when a different callable workflow version is encountered in legacy mode but retains first version', async () => {
+      const workflowV1 = `name: CI v1\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v1\n`
+      const workflowV2 = `name: CI v2\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v2\n`
+      mockGetCommit('wf-sha-v1')
+      mockGetContent(workflowV1)
+      mockGetCommit('wf-sha-v2')
+      mockGetContent(workflowV2)
+
+      const writer = new FileWriter('test-token', undefined, 'legacy')
+      const result = await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'v1',
+            uses: 'org/repo/.github/workflows/ci.yml@v1'
+          },
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'v2',
+            uses: 'org/repo/.github/workflows/ci.yml@v2'
+          }
+        ],
+        tempDir
+      )
+
+      expect(result.workflowsWritten).toBe(2)
+      expect(result.errors).toHaveLength(0)
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('org/repo/.github/workflows/ci.yml')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('wf-sha-v1')
+      )
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('wf-sha-v2')
+      )
+
+      const legacyPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'org',
+        'repo',
+        '.github',
+        'workflows',
+        'ci.yml'
+      )
+      expect(fs.readFileSync(legacyPath, 'utf8')).toBe(workflowV1)
+    })
+
     it('does not write SHA-less path when mode is not legacy', async () => {
       const actionYml = `name: Checkout\nruns:\n  using: node20\n  main: index.js\n`
       mockGetCommit('abc123')
@@ -1193,6 +1299,39 @@ describe('FileWriter', () => {
         'action.yml'
       )
       // SHA-less path should NOT exist in default mode
+      expect(fs.existsSync(legacyPath)).toBe(false)
+    })
+
+    it('does not write callable workflow SHA-less path when mode is not legacy', async () => {
+      const workflowV1 = `name: CI v1\non:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo v1\n`
+      mockGetCommit('wf-sha-v1')
+      mockGetContent(workflowV1)
+
+      const writer = new FileWriter('test-token')
+      await writer.writeExternalDependencies(
+        [
+          {
+            owner: 'org',
+            repo: 'repo',
+            actionPath: '.github/workflows/ci.yml',
+            ref: 'v1',
+            uses: 'org/repo/.github/workflows/ci.yml@v1'
+          }
+        ],
+        tempDir
+      )
+
+      const legacyPath = path.join(
+        tempDir,
+        '.github',
+        'workflows',
+        'external',
+        'org',
+        'repo',
+        '.github',
+        'workflows',
+        'ci.yml'
+      )
       expect(fs.existsSync(legacyPath)).toBe(false)
     })
 
