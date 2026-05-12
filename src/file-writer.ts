@@ -79,9 +79,7 @@ export class FileWriter {
     return /^[^/]+\/[^/]+\/.+\.ya?ml@.+$/.test(dep.uses)
   }
 
-  private async resolveRefToSha(
-    dep: ActionDependency
-  ): Promise<string> {
+  private async resolveRefToSha(dep: ActionDependency): Promise<string> {
     const octokit = await this.octokitProvider.getOctokitForRepo(
       dep.owner,
       dep.repo
@@ -197,12 +195,10 @@ export class FileWriter {
         'mapping.yaml'
       )
       fs.mkdirSync(path.dirname(mappingPath), { recursive: true })
-      fs.writeFileSync(
-        mappingPath,
-        yaml.stringify(this.actionMappings),
-        'utf8'
+      fs.writeFileSync(mappingPath, yaml.stringify(this.actionMappings), 'utf8')
+      core.info(
+        `Wrote action mapping file: ${path.relative(repoRoot, mappingPath)}`
       )
-      core.info(`Wrote action mapping file: ${path.relative(repoRoot, mappingPath)}`)
     }
 
     if (Object.keys(this.workflowMappings).length > 0) {
@@ -219,13 +215,13 @@ export class FileWriter {
         yaml.stringify(this.workflowMappings),
         'utf8'
       )
-      core.info(`Wrote workflow mapping file: ${path.relative(repoRoot, mappingPath)}`)
+      core.info(
+        `Wrote workflow mapping file: ${path.relative(repoRoot, mappingPath)}`
+      )
     }
   }
 
-  private async fetchActionFile(
-    dep: ActionDependency
-  ): Promise<string | null> {
+  private async fetchActionFile(dep: ActionDependency): Promise<string | null> {
     const octokit = await this.octokitProvider.getOctokitForRepo(
       dep.owner,
       dep.repo
@@ -273,9 +269,7 @@ export class FileWriter {
 
     const nestedDeps: ActionDependency[] = []
 
-    const runs = parsed.runs as
-      | { steps?: Array<{ uses?: string }> }
-      | undefined
+    const runs = parsed.runs as { steps?: Array<{ uses?: string }> } | undefined
     if (runs?.steps) {
       for (const step of runs.steps) {
         if (step.uses && !step.uses.startsWith('./')) {
@@ -286,10 +280,7 @@ export class FileWriter {
     }
 
     const jobs = parsed.jobs as
-      | Record<
-          string,
-          { uses?: string; steps?: Array<{ uses?: string }> }
-        >
+      | Record<string, { uses?: string; steps?: Array<{ uses?: string }> }>
       | undefined
     if (jobs) {
       for (const jobName in jobs) {

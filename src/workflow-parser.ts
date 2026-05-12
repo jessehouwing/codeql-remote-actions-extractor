@@ -735,35 +735,6 @@ export class WorkflowParser {
   }
 
   /**
-   * Recursively scan a directory for workflow files
-   */
-  private findWorkflowFiles(dirPath: string): string[] {
-    const files: string[] = []
-
-    try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
-
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name)
-
-        if (entry.isDirectory()) {
-          const subFiles = this.findWorkflowFiles(fullPath)
-          files.push(...subFiles)
-        } else if (
-          entry.isFile() &&
-          (entry.name.endsWith('.yml') || entry.name.endsWith('.yaml'))
-        ) {
-          files.push(fullPath)
-        }
-      }
-    } catch {
-      // Directory doesn't exist or can't be read
-    }
-
-    return files
-  }
-
-  /**
    * Process remote action or workflow to extract transitive dependencies.
    * Determines if the dependency is a callable workflow or composite action and routes accordingly.
    *

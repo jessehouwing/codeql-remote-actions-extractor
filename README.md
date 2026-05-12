@@ -58,8 +58,8 @@ jobs:
 
 ### For GHES / EMU / GitHub-DR Environments
 
-If your instance doesn't mirror all public actions, provide a token for
-public GitHub to resolve actions that live on GitHub.com:
+If your instance doesn't mirror all public actions, provide a token for public
+GitHub to resolve actions that live on GitHub.com:
 
 ```yaml
 - uses: jessehouwing/codeql-remote-actions-extractor@v1
@@ -70,18 +70,18 @@ public GitHub to resolve actions that live on GitHub.com:
 
 ## Inputs
 
-| Input                  | Description                                                                                                                    | Required | Default               |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------- | --------------------- |
-| `token`                | GitHub token with `contents:read` for fetching remote action/workflow source files.                                            | Yes      | `${{ github.token }}` |
-| `workflow-directory`   | Directory containing workflow files to scan.                                                                                   | No       | `.github/workflows`   |
-| `public-github-token`  | GitHub token for public GitHub when running on GHES/EMU/DR. Used to look up actions not available on the local instance.       | No       | _(empty)_             |
+| Input                 | Description                                                                                                              | Required | Default               |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------- | --------------------- |
+| `token`               | GitHub token with `contents:read` for fetching remote action/workflow source files.                                      | Yes      | `${{ github.token }}` |
+| `workflow-directory`  | Directory containing workflow files to scan.                                                                             | No       | `.github/workflows`   |
+| `public-github-token` | GitHub token for public GitHub when running on GHES/EMU/DR. Used to look up actions not available on the local instance. | No       | _(empty)_             |
 
 ## Outputs
 
-| Output            | Description                               |
-| ----------------- | ----------------------------------------- |
-| `actions-count`   | Number of composite actions downloaded.   |
-| `workflows-count` | Number of callable workflows downloaded.  |
+| Output            | Description                              |
+| ----------------- | ---------------------------------------- |
+| `actions-count`   | Number of composite actions downloaded.  |
+| `workflows-count` | Number of callable workflows downloaded. |
 
 ## How It Works
 
@@ -93,12 +93,15 @@ public GitHub to resolve actions that live on GitHub.com:
    callable workflow file from the GitHub API.
 4. **Path Placement**: Writes files into the directory layout expected by the
    CodeQL Actions extractor:
-   - Composite actions → `.github/actions/external/{owner}/{repo}/{sha}/[path/]action.yml`
-   - Callable workflows → `.github/workflows/external/{owner}/{repo}/{sha}/{path}/file.yml`
-   - Mapping files → `.github/actions/external/mapping.yaml` and `.github/workflows/external/mapping.yaml`
+   - Composite actions →
+     `.github/actions/external/{owner}/{repo}/{sha}/[path/]action.yml`
+   - Callable workflows →
+     `.github/workflows/external/{owner}/{repo}/{sha}/{path}/file.yml`
+   - Mapping files → `.github/actions/external/mapping.yaml` and
+     `.github/workflows/external/mapping.yaml`
 5. **CodeQL Analysis**: With the files in place, CodeQL can follow `uses:`
-   references across repository boundaries and perform interprocedural
-   dataflow analysis on third-party action source code.
+   references across repository boundaries and perform interprocedural dataflow
+   analysis on third-party action source code.
 
 ## Permissions
 
@@ -106,7 +109,7 @@ public GitHub to resolve actions that live on GitHub.com:
 jobs:
   analyze:
     permissions:
-      contents: read        # Required to fetch remote action source files
+      contents: read # Required to fetch remote action source files
       security-events: write # Required by CodeQL to upload results
 ```
 

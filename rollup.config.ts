@@ -19,7 +19,18 @@ const config = {
     commonjs({
       strictRequires: true
     })
-  ]
+  ],
+  onwarn(warning) {
+    // Suppress known harmless warnings from dependencies
+    if (
+      warning.code === 'THIS_IS_UNDEFINED' ||
+      warning.code === 'CIRCULAR_DEPENDENCY'
+    ) {
+      return
+    }
+    // Show other warnings
+    console.warn(warning.message)
+  }
 }
 
 export default config

@@ -206,12 +206,8 @@ describe('FileWriter', () => {
 
       expect(result.actionsWritten).toBe(1)
       // Only one getCommit + one getContent call should be made
-      expect(
-        github.mockOctokit.rest.repos.getCommit
-      ).toHaveBeenCalledTimes(1)
-      expect(
-        github.mockOctokit.rest.repos.getContent
-      ).toHaveBeenCalledTimes(1)
+      expect(github.mockOctokit.rest.repos.getCommit).toHaveBeenCalledTimes(1)
+      expect(github.mockOctokit.rest.repos.getContent).toHaveBeenCalledTimes(1)
     })
 
     it('handles API errors gracefully', async () => {
@@ -287,9 +283,7 @@ describe('FileWriter', () => {
 
       expect(result.actionsWritten).toBe(1)
       // Should have tried action.yml first, then action.yaml
-      expect(
-        github.mockOctokit.rest.repos.getContent
-      ).toHaveBeenCalledTimes(2)
+      expect(github.mockOctokit.rest.repos.getContent).toHaveBeenCalledTimes(2)
     })
 
     it('recursively downloads nested composite action dependencies', async () => {
@@ -826,17 +820,50 @@ describe('FileWriter', () => {
       // Verify all 3 files exist
       expect(
         fs.existsSync(
-          path.join(tempDir, '.github', 'workflows', 'external', 'org', 'repo', 'wf-sha-a', '.github', 'workflows', 'ci.yml')
+          path.join(
+            tempDir,
+            '.github',
+            'workflows',
+            'external',
+            'org',
+            'repo',
+            'wf-sha-a',
+            '.github',
+            'workflows',
+            'ci.yml'
+          )
         )
       ).toBe(true)
       expect(
         fs.existsSync(
-          path.join(tempDir, '.github', 'workflows', 'external', 'org', 'repo-b', 'wf-sha-b', '.github', 'workflows', 'build.yml')
+          path.join(
+            tempDir,
+            '.github',
+            'workflows',
+            'external',
+            'org',
+            'repo-b',
+            'wf-sha-b',
+            '.github',
+            'workflows',
+            'build.yml'
+          )
         )
       ).toBe(true)
       expect(
         fs.existsSync(
-          path.join(tempDir, '.github', 'workflows', 'external', 'org', 'repo-c', 'wf-sha-c', '.github', 'workflows', 'test.yml')
+          path.join(
+            tempDir,
+            '.github',
+            'workflows',
+            'external',
+            'org',
+            'repo-c',
+            'wf-sha-c',
+            '.github',
+            'workflows',
+            'test.yml'
+          )
         )
       ).toBe(true)
 
@@ -894,19 +921,48 @@ describe('FileWriter', () => {
       // Verify workflow file
       expect(
         fs.existsSync(
-          path.join(tempDir, '.github', 'workflows', 'external', 'org', 'repo', 'wf-sha', '.github', 'workflows', 'ci.yml')
+          path.join(
+            tempDir,
+            '.github',
+            'workflows',
+            'external',
+            'org',
+            'repo',
+            'wf-sha',
+            '.github',
+            'workflows',
+            'ci.yml'
+          )
         )
       ).toBe(true)
 
       // Verify both composite action files
       expect(
         fs.existsSync(
-          path.join(tempDir, '.github', 'actions', 'external', 'org', 'setup', 'setup-sha', 'action.yml')
+          path.join(
+            tempDir,
+            '.github',
+            'actions',
+            'external',
+            'org',
+            'setup',
+            'setup-sha',
+            'action.yml'
+          )
         )
       ).toBe(true)
       expect(
         fs.existsSync(
-          path.join(tempDir, '.github', 'actions', 'external', 'org', 'helper', 'helper-sha', 'action.yml')
+          path.join(
+            tempDir,
+            '.github',
+            'actions',
+            'external',
+            'org',
+            'helper',
+            'helper-sha',
+            'action.yml'
+          )
         )
       ).toBe(true)
 
@@ -922,7 +978,13 @@ describe('FileWriter', () => {
 
       const workflowMapping = yaml.parse(
         fs.readFileSync(
-          path.join(tempDir, '.github', 'workflows', 'external', 'mapping.yaml'),
+          path.join(
+            tempDir,
+            '.github',
+            'workflows',
+            'external',
+            'mapping.yaml'
+          ),
           'utf8'
         )
       )
