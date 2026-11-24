@@ -43,7 +43,7 @@ jobs:
 
       - name: Setup Ruby
         id: setup-ruby
-        uses: ruby/setup-ruby@afeafc3d1ab54a631816aba4c914a0081c12ff2f #v1.310.0
+        uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 #v1.343.0
         with:
           ruby-version: ruby
 
@@ -79,7 +79,7 @@ jobs:
       - if: ${{ failure() && steps.diff.outcome == 'failure' }}
         name: Upload Artifact
         id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a #v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 #v7.0.2
         with:
           name: dist
           path: dist/
